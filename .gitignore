@@ -1,0 +1,19 @@
+# สภาพแวดล้อม Python
+.venv/
+__pycache__/
+*.pyc
+
+# ผลลัพธ์การ build (ไฟล์ใหญ่ .exe เกิน 100MB ห้ามขึ้น GitHub)
+dist/
+build/
+*.spec
+
+# ไฟล์ชั่วคราว/ทดสอบ
+*.tmp
+*_shot.png
+*_check.png
+*_dbg.png
+
+# ไฟล์เฉพาะเครื่อง
+Thumbs.db
+.DS_Store
