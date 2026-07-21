@@ -1,4 +1,40 @@
-# Ballcar PDF (Windows)
+<div align="center">
+
+<img src="logo/Ballcar%20PDF.jpg" width="150" alt="Ballcar PDF logo">
+
+# Ballcar PDF
+
+**โปรแกรมจัดการไฟล์ PDF ครบวงจร สำหรับ Windows — รองรับภาษาไทยเต็มรูปแบบ**
+
+[![Download](https://img.shields.io/badge/⬇_ดาวน์โหลด-Ballcar_PDF.exe-e63329?style=for-the-badge)](https://github.com/ballcar/Ballcar-PDF/releases/latest)
+![Platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?style=flat-square&logo=windows)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)
+
+</div>
+
+---
+
+## ✨ ความสามารถ
+
+| | |
+|---|---|
+| 📖 **อ่าน & ค้นหา** | เปิด/อ่าน PDF, ค้นหาคำ (ไทย/Eng), เปิดไฟล์ที่มีรหัสผ่าน |
+| 📄 **จัดการหน้า** | แทรก · ลบ · **ลากสลับลำดับ** · หมุน · รวมไฟล์ · แยกไฟล์ · เลขหน้า |
+| ✍️ **แก้เนื้อหา** | เพิ่มข้อความ · แก้ข้อความเดิม · **ไฮไลต์** · ลายน้ำ · กรอกฟอร์ม |
+| 🖋️ **ลายเซ็น** | วาง/ลากปรับขนาด · **คลังลายเซ็น**เรียกใช้ซ้ำ · ลบพื้นหลังอัตโนมัติ |
+| 🔄 **แปลงไฟล์** | เป็น Word · Excel · รูป (.jpg/.png) · **OCR อ่านไฟล์สแกนภาษาไทย** |
+| 🔒 **ความปลอดภัย** | ตั้ง/เปลี่ยน/ลบ รหัสผ่าน (เข้ารหัส AES-256) |
+| 🖨️ **อื่นๆ** | พิมพ์ · Undo/Redo · **2 ภาษา (ไทย/English)** |
+
+## ⬇️ ดาวน์โหลด & ติดตั้ง
+
+1. โหลด `Ballcar PDF.exe` จาก **[หน้า Releases](https://github.com/ballcar/Ballcar-PDF/releases/latest)**
+2. ดับเบิลคลิกเปิดได้เลย — ไฟล์เดียวจบ ไม่ต้องติดตั้ง Python
+3. ครั้งแรก Windows SmartScreen อาจเตือน → กด **"ข้อมูลเพิ่มเติม" → "เรียกใช้ต่อไป"** (เพราะยังไม่ได้เซ็นใบรับรอง)
+
+> 💡 ฟีเจอร์ **OCR** ต้องติดตั้ง Tesseract แยก (ดูหัวข้อ "ติดตั้ง OCR" ด้านล่าง)
+
+---
 
 ## เวอร์ชัน
 เก็บที่ `version.json` — `build-exe.ps1` จะ **เพิ่มเลขให้อัตโนมัติทุกครั้งที่ build**
