@@ -54,15 +54,19 @@ def fresh():
 def place(w, rect, image=sig_png):
     with patch("app.main.QFileDialog.getOpenFileName", return_value=(str(image), "")):
         w.signature_dialog()
+    off = w.viewer._page_offset()   # ภาพหน้าอาจถูกวางกึ่งกลาง ต้องบวกด้วย
     w.viewer.overlay.setGeometry(
-        int(rect.x0), int(rect.y0), int(rect.width), int(rect.height))
+        int(rect.x0) + off.x(), int(rect.y0) + off.y(),
+        int(rect.width), int(rect.height))
     w.commit_placement()
     return w.doc.stamps[-1]
 
 
 def click_viewer(w, page_pt):
     """คลิกที่จุดบนหน้า (พิกัด PDF)"""
-    local = QPoint(int(page_pt.x * w.viewer.zoom), int(page_pt.y * w.viewer.zoom))
+    off = w.viewer._page_offset()   # ภาพหน้าอาจถูกวางกึ่งกลาง ต้องบวกด้วย
+    local = QPoint(int(page_pt.x * w.viewer.zoom) + off.x(),
+                   int(page_pt.y * w.viewer.zoom) + off.y())
     pos = w.viewer._label.mapTo(w.viewer, local)
     w.viewer.mousePressEvent(QMouseEvent(
         QEvent.MouseButtonPress, QPointF(pos), QPointF(pos),
@@ -95,7 +99,7 @@ click_viewer(w, fitz.Point(200, 340))
 w.edit_selected_stamp()
 assert w.viewer.placing and w.viewer.editing_stamp is stamp
 assert len(w.doc.stamps) == 1, "ระหว่างแก้ไขต้องไม่เกิดตัวใหม่"
-w.viewer.overlay.setGeometry(400, 600, 200, 80)
+w.viewer.overlay.setGeometry(400 + w.viewer._page_offset().x(), 600 + w.viewer._page_offset().y(), 200, 80)
 w.commit_placement()
 assert len(w.doc.stamps) == 1, "แก้เสร็จต้องยังมีตัวเดียว"
 assert w.doc.stamps[0].rect == fitz.Rect(400, 600, 600, 680), w.doc.stamps[0].rect
@@ -104,7 +108,7 @@ print("OK  ย้ายลายเซ็นที่วางไปแล้ว
 # ---- ปรับขนาดลายเซ็นที่วางไปแล้ว ----
 click_viewer(w, fitz.Point(500, 640))
 w.edit_selected_stamp()
-w.viewer.overlay.setGeometry(400, 600, 100, 40)
+w.viewer.overlay.setGeometry(400 + w.viewer._page_offset().x(), 600 + w.viewer._page_offset().y(), 100, 40)
 w.commit_placement()
 assert w.doc.stamps[0].rect == fitz.Rect(400, 600, 500, 640), w.doc.stamps[0].rect
 print("OK  ปรับขนาดลายเซ็นที่วางไปแล้วได้")
@@ -226,7 +230,9 @@ print("OK  ปิดการลบพื้นหลังได้")
 
 # ---- ดับเบิลคลิกลายเซ็น = เข้าโหมดย้าย/ย่อขยายทันที ----
 def dbl_click(w, page_pt):
-    local = QPoint(int(page_pt.x * w.viewer.zoom), int(page_pt.y * w.viewer.zoom))
+    off = w.viewer._page_offset()   # ภาพหน้าอาจถูกวางกึ่งกลาง ต้องบวกด้วย
+    local = QPoint(int(page_pt.x * w.viewer.zoom) + off.x(),
+                   int(page_pt.y * w.viewer.zoom) + off.y())
     pos = w.viewer._label.mapTo(w.viewer, local)
     w.viewer.mouseDoubleClickEvent(QMouseEvent(
         QEvent.MouseButtonDblClick, QPointF(pos), QPointF(pos),
@@ -241,7 +247,7 @@ assert w.viewer.editing_stamp is stamp
 assert w._placing_bar.isVisible()
 
 # ย้ายไปที่ใหม่แล้วยืนยัน
-w.viewer.overlay.setGeometry(400, 500, 150, 60)
+w.viewer.overlay.setGeometry(400 + w.viewer._page_offset().x(), 500 + w.viewer._page_offset().y(), 150, 60)
 w.commit_placement()
 assert len(w.doc.stamps) == 1
 assert w.doc.stamps[0].rect == fitz.Rect(400, 500, 550, 560), w.doc.stamps[0].rect
@@ -252,7 +258,8 @@ for i in range(3):
     here = w.doc.stamps[0].rect
     dbl_click(w, fitz.Point((here.x0 + here.x1) / 2, (here.y0 + here.y1) / 2))
     assert w.viewer.placing, f"รอบที่ {i+1} เข้าโหมดแก้ไขไม่ได้"
-    w.viewer.overlay.setGeometry(200 + i * 10, 200, 150, 60)
+    _o = w.viewer._page_offset()
+    w.viewer.overlay.setGeometry(200 + i * 10 + _o.x(), 200 + _o.y(), 150, 60)
     w.commit_placement()
 assert len(w.doc.stamps) == 1, "ย้ายซ้ำหลายรอบต้องไม่เกิดตัวซ้ำ"
 assert w.doc.stamps[0].rect.x0 == 220

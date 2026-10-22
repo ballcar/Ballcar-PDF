@@ -44,7 +44,9 @@ def fresh(path=src):
 
 
 def click(w, page_pt):
-    local = QPoint(int(page_pt.x * w.viewer.zoom), int(page_pt.y * w.viewer.zoom))
+    off = w.viewer._page_offset()   # ภาพหน้าอาจถูกวางกึ่งกลาง ต้องบวกด้วย
+    local = QPoint(int(page_pt.x * w.viewer.zoom) + off.x(),
+                   int(page_pt.y * w.viewer.zoom) + off.y())
     pos = w.viewer._label.mapTo(w.viewer, local)
     w.viewer.mousePressEvent(QMouseEvent(QEvent.MouseButtonPress, QPointF(pos), QPointF(pos),
                                          Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
@@ -57,7 +59,7 @@ assert w.viewer._picking_point and w.viewer._pick_mode == "edit"
 print("OK  เข้าโหมดคลิกข้อความเดิม")
 
 # ---- คลิกข้อความ -> เด้ง dialog เติมคำเดิม -> แก้ ----
-with patch.object(w, "_ask_text_content", return_value=("Invoice No. XYZ999", True)):
+with patch.object(w, "_ask_text_content", return_value=("Invoice No. XYZ999", "", False, True)):
     click(w, fitz.Point(150, 96))
 assert not w.viewer._picking_point
 assert len(w.doc.textboxes) == 1
@@ -77,7 +79,7 @@ print("OK  บันทึกแล้วคำใหม่แทนที่ค
 # ---- ยกเลิก dialog = คงคำเดิมไว้ในกล่อง (แต่เดิมถูกลบไปแล้ว จึงเท่าเดิม) ----
 w = fresh()
 w.edit_text_dialog()
-with patch.object(w, "_ask_text_content", return_value=("", False)):
+with patch.object(w, "_ask_text_content", return_value=("", "", False, False)):
     click(w, fitz.Point(150, 196))
 assert len(w.doc.textboxes) == 1
 assert "สมชาย" in w.doc.textboxes[0].text, "ยกเลิกแล้วยังคงคำเดิมในกล่อง"

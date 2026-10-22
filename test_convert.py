@@ -149,10 +149,10 @@ assert out_x.exists()
 print("OK  ดึงตารางผ่านเมนูได้")
 
 w = fresh()
-with patch("app.main.QInputDialog.getItem", return_value=("เฉพาะหน้าที่เลือก (1 หน้า)", True)), \
+w.thumbs.setCurrentRow(1)              # ไปหน้า 2 (ไม่มีตาราง)
+with patch("app.main.QInputDialog.getItem", return_value=("หน้าปัจจุบัน (หน้า 2)", True)), \
      patch("app.main.QFileDialog.getSaveFileName", return_value=(str(tmp / "nope.xlsx"), "")), \
      patch("app.main.QMessageBox.information") as info:
-    w.thumbs.setCurrentRow(1)          # หน้า 2 ไม่มีตาราง
     w.export_excel()
     assert info.called, "ไม่เจอตารางต้องแจ้งผู้ใช้"
 print("OK  ไม่เจอตารางแล้วแจ้งผู้ใช้ผ่าน UI")

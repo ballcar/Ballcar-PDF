@@ -107,22 +107,24 @@ assert after.width() == before.width() - 20, (before, after)
 print("OK  ลากมุมซ้ายบนเพื่อย่อ")
 
 # ---- ย่อจนเล็กมากต้องไม่หายไป ----
-ov.setGeometry(100, 100, 200, 80)
+ov.setGeometry(100 + w.viewer._page_offset().x(), 100 + w.viewer._page_offset().y(), 200, 80)
 press_drag(ov, QPoint(198, 78), QPoint(500, 500), QPoint(100, 100))
 assert ov.geometry().width() >= MIN_SIZE and ov.geometry().height() >= MIN_SIZE, ov.geometry()
 print("OK  ย่อเล็กสุดยังไม่หาย")
 
 # ---- ซูมแล้วกรอบต้องขยับตาม ----
-ov.setGeometry(200, 300, 200, 80)
+ov.setGeometry(200 + w.viewer._page_offset().x(), 300 + w.viewer._page_offset().y(), 200, 80)
 w.viewer.set_zoom(2.0)
-assert ov.geometry().topLeft() == QPoint(400, 600), ov.geometry()
+off2 = w.viewer._page_offset()
+assert ov.geometry().topLeft() == QPoint(400 + off2.x(), 600 + off2.y()), ov.geometry()
 assert ov.geometry().width() == 400
 w.viewer.set_zoom(1.0)
-assert ov.geometry().topLeft() == QPoint(200, 300), ov.geometry()
+off3 = w.viewer._page_offset()
+assert ov.geometry().topLeft() == QPoint(200 + off3.x(), 300 + off3.y()), ov.geometry()
 print("OK  ซูมแล้วกรอบตัวอย่างขยับตาม")
 
 # ---- กดยืนยัน: ตำแหน่งบนไฟล์ต้องตรงกับกรอบที่ปรับไว้ ----
-ov.setGeometry(150, 400, 200, 80)
+ov.setGeometry(150 + w.viewer._page_offset().x(), 400 + w.viewer._page_offset().y(), 200, 80)
 w.commit_placement()
 # ลายเซ็นเก็บเป็นชั้นลอยก่อน (ยังแก้ได้) ฝังลงไฟล์ตอนบันทึก
 assert len(w.doc.stamps) == 1, w.doc.stamps
@@ -214,7 +216,7 @@ cp.clear_with()          # โปร่งใสทั้งแผ่น
 cp.save(str(clear_sig))
 with patch("app.main.QFileDialog.getOpenFileName", return_value=(str(clear_sig), "")):
     w.signature_dialog()
-w.viewer.overlay.setGeometry(100, 110, 200, 80)   # คร่อมเส้นที่ y=150
+w.viewer.overlay.setGeometry(100 + w.viewer._page_offset().x(), 110 + w.viewer._page_offset().y(), 200, 80)   # คร่อมเส้นที่ y=150
 app.processEvents()
 
 image = w.viewer.grab().toImage()

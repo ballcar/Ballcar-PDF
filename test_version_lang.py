@@ -81,7 +81,8 @@ assert "File" in top_menus(w), top_menus(w)
 assert "Tools" in top_menus(w)
 assert w.act_open.text() == "Open", w.act_open.text()
 assert w.act_undo.text().endswith("Undo"), w.act_undo.text()
-assert w.sig_button.text() == "✒ Signatures"
+assert w.tools_button.text().strip() == "✎ Edit Tools", w.tools_button.text()
+assert w.sig_menu.title() == "✒ Signatures", w.sig_menu.title()
 assert w.search_box.placeholderText() == "Search in PDF…"
 assert w.thumbs.item(0).text() == "Page 1", w.thumbs.item(0).text()
 assert w._ok_btn.text() == "✔ Place Signature"

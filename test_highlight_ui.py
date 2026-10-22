@@ -36,7 +36,10 @@ def fresh():
 def drag(w, p0, p1):
     """ลากบนวิวเออร์จากจุด p0 ถึง p1 (พิกัดหน้า PDF)"""
     def pos(pt):
-        local = QPoint(int(pt.x * w.viewer.zoom), int(pt.y * w.viewer.zoom))
+        # ต้องบวก offset ที่ภาพหน้าถูกวางกึ่งกลางใน label ด้วย (เหมือนที่ผู้ใช้เห็นจริง)
+        off = w.viewer._page_offset()
+        local = QPoint(int(pt.x * w.viewer.zoom) + off.x(),
+                       int(pt.y * w.viewer.zoom) + off.y())
         return w.viewer._label.mapTo(w.viewer, local)
     a, b = pos(p0), pos(p1)
     w.viewer.mousePressEvent(QMouseEvent(QEvent.MouseButtonPress, QPointF(a), QPointF(a),

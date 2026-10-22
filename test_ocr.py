@@ -115,17 +115,19 @@ body = ui_txt.read_text(encoding="utf-8")
 assert "--- หน้า 1 ---" in body and "ใบเสนอราคา" in body, body[:200]
 print("OK  ดึงข้อความ OCR เป็น .txt ได้")
 
-# ---- ไม่มี Tesseract ต้องเตือนให้รู้วิธีแก้ ----
-with patch("app.pdfops.tesseract_dir", return_value=None):
+# ---- ไม่มีไฟล์ภาษาเลย ต้องเตือนให้รู้วิธีแก้ ----
+# หมายเหตุ: ตั้งแต่ 1.0.62 ไม่ต้องติดตั้ง Tesseract แยกแล้ว (ไฟล์ภาษาแถมมากับตัวติดตั้ง)
+# จึงไม่แนะนำ winget อีก แต่บอกให้ติดตั้งโปรแกรมใหม่แทน
+with patch("app.pdfops.tessdata_dir", return_value=None):
     try:
         pdfops.ensure_tesseract()
     except RuntimeError as exc:
-        assert "winget install" in str(exc), str(exc)
-        print("OK  ไม่มี Tesseract แล้วเตือนพร้อมวิธีติดตั้ง")
+        assert "ติดตั้งโปรแกรมใหม่" in str(exc), str(exc)
+        print("OK  ไม่มีไฟล์ภาษาแล้วเตือนพร้อมวิธีแก้")
     else:
         raise AssertionError("ควร error")
 
-# ---- มี Tesseract แต่ไม่มีภาษาไทย ----
+# ---- มีไฟล์ภาษา แต่ไม่มีภาษาไทย ----
 with patch("app.pdfops.ocr_languages", return_value=["eng", "osd"]):
     try:
         pdfops.ensure_tesseract()

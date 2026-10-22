@@ -35,7 +35,9 @@ def fresh():
 
 
 def click(w, page_pt, dbl=False):
-    local = QPoint(int(page_pt.x * w.viewer.zoom), int(page_pt.y * w.viewer.zoom))
+    off = w.viewer._page_offset()   # ภาพหน้าอาจถูกวางกึ่งกลาง ต้องบวกด้วย
+    local = QPoint(int(page_pt.x * w.viewer.zoom) + off.x(),
+                   int(page_pt.y * w.viewer.zoom) + off.y())
     pos = w.viewer._label.mapTo(w.viewer, local)
     etype = QEvent.MouseButtonDblClick if dbl else QEvent.MouseButtonPress
     handler = w.viewer.mouseDoubleClickEvent if dbl else w.viewer.mousePressEvent
@@ -50,7 +52,7 @@ assert w.viewer._picking_point, "ต้องเข้าโหมดรอค�
 print("OK  กด 'เพิ่มข้อความ' เข้าโหมดรอคลิกจุด")
 
 # คลิกจุด -> เด้ง dialog กรอกข้อความ
-with patch.object(w, "_ask_text_content", return_value=("ทดสอบข้อความ", True)):
+with patch.object(w, "_ask_text_content", return_value=("ทดสอบข้อความ", "", False, True)):
     click(w, fitz.Point(150, 200))
 assert not w.viewer._picking_point, "คลิกแล้วต้องออกจากโหมดคลิกจุด"
 assert len(w.doc.textboxes) == 1
@@ -77,13 +79,13 @@ assert w._text_bar.isVisible()
 print("OK  คลิกโดนกล่องข้อความเลือกได้")
 
 # ---- ดับเบิลคลิก = แก้คำ ----
-with patch.object(w, "_ask_text_content", return_value=("แก้ไขแล้ว", True)):
+with patch.object(w, "_ask_text_content", return_value=("แก้ไขแล้ว", "", False, True)):
     click(w, fitz.Point(160, 210), dbl=True)
 assert box.text == "แก้ไขแล้ว", box.text
 print("OK  ดับเบิลคลิกแก้คำได้")
 
 # ---- ปุ่มแก้คำบนแถบ ----
-with patch.object(w, "_ask_text_content", return_value=("จากปุ่ม", True)):
+with patch.object(w, "_ask_text_content", return_value=("จากปุ่ม", "", False, True)):
     w.edit_selected_textbox()
 assert box.text == "จากปุ่ม"
 print("OK  ปุ่มแก้คำบนแถบทำงาน")
@@ -93,7 +95,7 @@ w.viewer.selected_textbox = box
 w.move_selected_textbox()
 assert w.viewer.placing and w.viewer.editing_textbox is box
 assert len(w.doc.textboxes) == 1, "ระหว่างแก้ต้องไม่เกิดกล่องใหม่"
-w.viewer.overlay.setGeometry(300, 400, 250, 60)
+w.viewer.overlay.setGeometry(300 + w.viewer._page_offset().x(), 400 + w.viewer._page_offset().y(), 250, 60)
 w.commit_placement()
 assert len(w.doc.textboxes) == 1
 assert w.doc.textboxes[0].rect == fitz.Rect(300, 400, 550, 460), w.doc.textboxes[0].rect
@@ -101,7 +103,7 @@ print("OK  ย้าย/ปรับขนาดข้อความ ไม่�
 
 # ---- ลากมุมย่อ/ขยาย -> ตัวอักษรปรับตาม ----
 w = fresh()
-with patch.object(w, "_ask_text_content", return_value=("ปรับขนาด", True)):
+with patch.object(w, "_ask_text_content", return_value=("ปรับขนาด", "", False, True)):
     w.add_text_dialog()
     click(w, fitz.Point(100, 100))
 box = w.doc.textboxes[0]
@@ -162,7 +164,7 @@ print("OK  Delete ลบกล่องข้อความ ไม่เผล�
 
 # ---- บันทึกแล้วฝังลงไฟล์ ----
 w = fresh()
-with patch.object(w, "_ask_text_content", return_value=("Invoice 2023", True)):
+with patch.object(w, "_ask_text_content", return_value=("Invoice 2023", "", False, True)):
     w.add_text_dialog()
     click(w, fitz.Point(100, 150))
 out = tmp / "saved.pdf"
@@ -181,7 +183,7 @@ print("OK  Esc ยกเลิกโหมดคลิกจุด")
 # ---- ยกเลิก dialog = ไม่เพิ่มกล่อง ----
 w = fresh()
 w.add_text_dialog()
-with patch.object(w, "_ask_text_content", return_value=("", False)):
+with patch.object(w, "_ask_text_content", return_value=("", "", False, False)):
     click(w, fitz.Point(150, 200))
 assert w.doc.textboxes == []
 print("OK  ยกเลิก dialog ไม่เพิ่มกล่อง")

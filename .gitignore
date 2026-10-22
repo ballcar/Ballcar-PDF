@@ -8,7 +8,19 @@ dist/
 build/
 *.spec
 
+# สร้างใหม่ทุกครั้งที่ build (scripts/make-version-info.py)
+version_info.txt
+
+# QR พร้อมเพย์ส่วนตัว — มีข้อมูลบัญชีรับเงิน ห้ามขึ้น repo สาธารณะ
+# (build-exe.ps1 ยังหยิบจากในเครื่องไปใส่ .exe ได้ตามเดิม)
+qr_code/
+logo/promptpay*
+
+# เอกสารที่ส่งออก (คู่มือ PDF) — ต้นฉบับอยู่ใน Claude Docs
+คู่มือ*.pdf
+
 # ไฟล์ชั่วคราว/ทดสอบ
+sp3.png
 *.tmp
 *_shot.png
 *_check.png
