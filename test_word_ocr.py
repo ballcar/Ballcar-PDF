@@ -55,6 +55,32 @@ assert pdfops._join_ocr_spans([span("ษั", 0, 9, h=11), span("ท", 17, 22, h
 assert pdfops._is_ocr_noise("* ' .") and not pdfops._is_ocr_noise("ข้อ 1.")
 print("OK  ต่อชิ้น OCR: อังกฤษเว้นวรรค ไทยไม่แตกตัว ำ ถูกต้อง ตัดเส้นขยะทิ้ง")
 
+
+# ---- รวมท่อนเป็นบรรทัด (กรณีจริงจากประกาศโควิดที่สแกนด้วย RICOH) ----
+def piece(text, x0, x1, base, h=16):
+    return [{"text": text, "bbox": (x0, base - h, x1, base), "origin": (x0, base)}]
+
+rows = pdfops._merge_ocr_rows([
+    piece("ทดลองปฏิบ", 120, 163, 262.3),            # Tesseract หั่นบรรทัดเป็นหลายท่อน
+    piece("ติ", 168, 171, 259.2, h=6),
+    piece("งานที่บ้าน", 176, 230, 263.3),
+    piece("Aw", 156, 173, 259.4), piece("ow", 200, 210, 259.4),   # ชั้นวรรณยุกต์อ่านเป็นขยะ
+    piece("เริ่มตั้งแต่วันที่ 25", 380, 467, 283.2),   # สองท่อนจริงที่กรอบเหลื่อมกัน
+    piece("- 31 มี", 456, 477, 283.2),
+    piece("ดวยการประกาศเพื", 113, 221, 301.6), piece("4", 226, 227, 298.2),
+    piece("อเป็นการป", 231, 269, 301.6),
+    piece("ประกาศ ณ วันที่ 24", 330, 450, 340),        # ห่างระดับคอลัมน์ -> แยกบรรทัด
+    piece("ซ้ายสุด", 40, 80, 340),
+])
+texts = [r[0] for r in rows]
+assert "ทดลองปฏิบติงานที่บ้าน" in texts[0].replace(" ", ""), texts
+assert not any("Aw" in t or "ow" in t for t in texts), f"เศษชั้นวรรณยุกต์ต้องหาย: {texts}"
+assert any("- 31 มี" in t and "25" in t for t in texts), f"ท่อนจริงที่เหลื่อมกันต้องอยู่ครบ: {texts}"
+assert any(t.replace(" ", "") == "ดวยการประกาศเพือเป็นการป" for t in texts), \
+    f"เลขขยะที่แทรกกลางคำไทยต้องหาย: {texts}"
+assert "ซ้ายสุด" in texts and "ประกาศ ณ วันที่ 24" in texts, f"คนละคอลัมน์ต้องแยกกัน: {texts}"
+print("OK  รวมท่อนเป็นบรรทัด ตัดเศษวรรณยุกต์ เก็บท่อนจริงที่เหลื่อมกัน แยกคอลัมน์")
+
 # ---- ไฟล์สแกนอังกฤษ -> Word มีข้อความจริง ไม่ใช่รูปทั้งหน้า ----
 scan_en = make_scan("scan_en.pdf", ["Dear Sir / Madam,", "Re: Unlicensed Use of Software",
                                     "Please contact us before 12 September 2022."])

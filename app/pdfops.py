@@ -304,6 +304,95 @@ def _is_ocr_noise(text: str) -> bool:
     return len(core) <= 2 and not thai_letter and not any("0" <= ch <= "9" for ch in core)
 
 
+def _merge_ocr_rows(pieces: list[list[dict]]) -> list[tuple]:
+    """รวมท่อน OCR ที่อยู่บรรทัดเดียวกันเป็นบรรทัดเดียว คืน (text, x0, x1, y0, y1, baseline)
+
+    Tesseract มักหั่นบรรทัดไทยเป็นหลายท่อน (เช่น 'ทดลองปฏิบั' | 'ติ' | 'งานที่บ้าน')
+    ถ้าวางแยกกัน แต่ละท่อนได้ขนาดตัวอักษรต่างกัน Word จะเล็กใหญ่ปนกันในบรรทัดเดียว
+    ท่อนที่ห่างกันมาก (คนละคอลัมน์ เช่น ซ้าย/ขวาของหัวจดหมาย) ยังแยกไว้ตามเดิม
+    """
+    def box(spans):
+        return (min(s["bbox"][0] for s in spans), max(s["bbox"][2] for s in spans),
+                min(s["bbox"][1] for s in spans), max(s["bbox"][3] for s in spans))
+
+    def baseline(spans):
+        return sorted(s["origin"][1] for s in spans)[len(spans) // 2]
+
+    # กรองขยะทีละท่อนก่อนรวม — ไม่งั้นเศษจากลายเซ็น/แถว **** จะติดเข้าไปในบรรทัดจริง
+    pieces = [p for p in pieces if not _is_ocr_noise(_join_ocr_spans(p))]
+    if not pieces:
+        return []
+    heights = sorted(b[3] - b[2] for b in map(box, pieces))
+    body = heights[len(heights) // 2] or 1
+
+    # จัดกลุ่มเป็นแถวตามเส้นฐาน แล้วเรียงซ้าย->ขวาในแถว
+    rows: list[list[list[dict]]] = []
+    # เทียบกับท่อนล่าสุดในแถว (ไล่ต่อกัน) — ชั้นวรรณยุกต์ลอยสูงกว่าบรรทัดจริงเล็กน้อย
+    # ถ้าเทียบกับท่อนแรก เศษจะแยกเป็นแถวของตัวเองแล้วหลุดการกรอง
+    for spans in sorted(pieces, key=baseline):
+        if rows and abs(baseline(spans) - baseline(rows[-1][-1])) < body * 0.5:
+            rows[-1].append(spans)
+        else:
+            rows.append([spans])
+
+    def width(spans):
+        b = box(spans)
+        return b[1] - b[0]
+
+    def junky(spans):
+        """ท่อนที่น่าจะเป็นเศษ: สั้นมาก หรือไม่มีอักษรไทยและสั้น (เช่น 'Aw' 'ow' '4' '๓๓a')
+        Tesseract อ่านชั้นสระบน/วรรณยุกต์ที่ลอยเหนือบรรทัดแยกเป็นอีกบรรทัด ได้เศษแบบนี้"""
+        core = [ch for s in spans for ch in s["text"]
+                if not ch.isspace() and ch not in _THAI_MARKS]
+        thai = any("ก" <= ch <= "ๆ" for ch in core)
+        return len(core) <= 2 or (not thai and len(core) <= 4)
+
+    def overlaps(a, b):
+        ax0, ax1, _, _ = box(a)
+        bx0, bx1, _, _ = box(b)
+        return min(ax1, bx1) - max(ax0, bx0) > (ax1 - ax0) * 0.3
+
+    lines = []
+    for row_no, row in enumerate(rows):
+        # เศษที่ทับข้อความจริงในแถวเดียวกันทิ้งไป ไม่งั้นไปแทรกกลางคำ (เช่น 'เพื 4 อ')
+        # ท่อนจริงที่กรอบเหลื่อมกันเล็กน้อย (เช่น '... วันที่ 25' กับ '- 31 มี') เก็บทั้งคู่
+        kept = [s for s in row
+                if not (junky(s) and any(o is not s and not junky(o) and overlaps(s, o)
+                                         for o in row))]
+        if not kept:
+            continue
+        kept.sort(key=lambda s: box(s)[0])
+        # เศษที่ไม่ใช่อักษรไทย แทรกระหว่างท่อนไทยสองท่อนที่ชิดกัน (เช่น 'เพื' | '4' | 'อเป็น')
+        # = วรรณยุกต์ที่อ่านเพี้ยน ส่วนเศษไทย (เช่น 'ติ' ของ 'ปฏิบัติ') เป็นของจริง เก็บไว้
+        kept = [s for n, s in enumerate(kept)
+                if not (junky(s) and not _has_thai(_join_ocr_spans(s)) and 0 < n < len(kept) - 1
+                        and _has_thai(_join_ocr_spans(kept[n - 1]))
+                        and _has_thai(_join_ocr_spans(kept[n + 1]))
+                        and box(s)[0] - box(kept[n - 1])[1] < body
+                        and box(kept[n + 1])[0] - box(s)[1] < body)]
+
+        # ต่อท่อนเรียงซ้าย->ขวา (ต่อทั้งท่อน ไม่สลับชิ้นข้ามท่อน) แยกเมื่อห่างระดับคอลัมน์
+        segments = [[kept[0]]]
+        for spans in kept[1:]:
+            if box(spans)[0] - box(segments[-1][-1])[1] > body * 3:
+                segments.append([spans])
+            else:
+                segments[-1].append(spans)
+        # แถวเศษล้วนที่อยู่ชิดแถวอื่น = ชั้นวรรณยุกต์ที่อ่านเพี้ยน (แถวเศษที่อยู่โดดๆ
+        # เช่น เลขหน้าท้ายกระดาษ ยังเก็บไว้)
+        near = any(abs(baseline(rows[n][0]) - baseline(row[0])) < body * 1.5
+                   for n in (row_no - 1, row_no + 1) if 0 <= n < len(rows))
+        for segment in segments:
+            spans = [s for piece in segment for s in piece]
+            text = _join_ocr_spans(spans)
+            if not text or _is_ocr_noise(text) or (near and junky(spans)):
+                continue
+            x0, x1, y0, y1 = box(spans)
+            main = max(segment, key=width)      # เส้นฐานของท่อนหลัก ไม่ใช่ของเศษ
+            lines.append((text, x0, x1, y0, y1, baseline(main)))
+    return lines
+
+
 @dataclass
 class Stamp:
     """ลายเซ็น/ตราประทับที่ยังแก้ไขได้ — ยังไม่ฝังลงไฟล์จนกว่าจะกดบันทึก"""
@@ -2399,37 +2488,43 @@ class PdfDocument:
         upright.insert_image(upright.rect, pixmap=page.get_pixmap(dpi=dpi))
         textpage = upright.get_textpage_ocr(flags=0, language=language, dpi=dpi,
                                             full=True, tessdata=tessdata_dir())
-        lines = []
+        pieces = []
         for block in upright.get_text("dict", textpage=textpage)["blocks"]:
             for line in block.get("lines", []):
                 spans = [s for s in line["spans"] if s["text"].strip()]
-                text = _join_ocr_spans(spans) if spans else ""
-                if not text or _is_ocr_noise(text):
-                    continue
-                x0 = min(s["bbox"][0] for s in spans)
-                x1 = max(s["bbox"][2] for s in spans)
-                y0 = min(s["bbox"][1] for s in spans)
-                y1 = max(s["bbox"][3] for s in spans)
-                baseline = sorted(s["origin"][1] for s in spans)[len(spans) // 2]
-                lines.append((text, x0, x1, y0, y1, baseline))
+                if spans:
+                    pieces.append(spans)
         upright_doc.close()
 
+        lines = _merge_ocr_rows(pieces)
         out = fitz.open()
         new_page = out.new_page(width=page.rect.width, height=page.rect.height)
         if not lines:
             return out
         # ใช้ขนาดตัวอักษรเดียวทั้งหน้า (OCR เดาขนาดรายคำแกว่งมาก Word จะดูเละ)
-        # เว้นบรรทัดที่สูงกว่าปกติชัดเจน เช่น หัวเรื่อง ให้ใหญ่ตามจริง
+        # เว้นบรรทัดที่สูงกว่าปกติชัดเจน เช่น หัวเรื่อง ให้ใหญ่ตามสัดส่วนจริง
+        # (รวมท่อนเป็นบรรทัดแล้ว ความสูงปกติรวมสระบน/ล่างไว้แล้ว จึงใช้เกณฑ์ 1.3 เท่าได้)
         heights = sorted(y1 - y0 for _, _, _, y0, y1, _ in lines)
         body_height = heights[len(heights) // 2]
         body_size = round(body_height * 0.92 * 2) / 2
         # ฝังฟอนต์ครั้งเดียวต่อหน้า (ฟอนต์ไทยมีตัวอังกฤษด้วย ใช้ได้ทั้งหน้า)
         fontname, font = self._register_font(new_page, " ".join(l[0] for l in lines))
+
+        # ฟอนต์เรามักกว้างกว่าฟอนต์ในภาพ (เช่น Angsana แคบมาก) — ย่อทั้งหน้าด้วยอัตราเดียว
+        # ไม่ย่อรายบรรทัด ไม่งั้นแต่ละบรรทัดได้ขนาดต่างกัน Word ดูเล็กใหญ่ปนกัน
+        body_lines = [l for l in lines if l[4] - l[3] < body_height * 1.3 and l[2] - l[1] > 0]
+        ratios = sorted((x1 - x0) / max(font.text_length(text, fontsize=body_size), 1)
+                        for text, x0, x1, *_ in body_lines)
+        if ratios:
+            body_size = max(6, round(body_size * min(1, ratios[len(ratios) // 2]) * 2) / 2)
+
+        right_edge = new_page.rect.width - 10
         for text, x0, x1, y0, y1, baseline in lines:
-            size = body_size if (y1 - y0) < body_height * 1.4 else round((y1 - y0) * 0.85)
+            ratio = (y1 - y0) / body_height
+            size = body_size if ratio < 1.3 else round(body_size * min(ratio, 3) * 2) / 2
             width = font.text_length(text, fontsize=size)
-            if width > (x1 - x0) * 1.08:      # ฟอนต์เรากว้างกว่าในภาพ ย่อให้อยู่ในบรรทัดเดิม
-                size = max(5, size * (x1 - x0) * 1.08 / width)
+            if x0 + width > right_edge:        # ล้นขอบกระดาษจริงๆ ค่อยย่อเฉพาะบรรทัดนั้น
+                size = max(5, size * (right_edge - x0) / width)
             new_page.insert_text((x0, baseline), text, fontname=fontname, fontsize=size)
         return out
 
