@@ -305,6 +305,21 @@ TEXTS: dict[str, dict[str, str]] = {
         "num.bad_format": "รูปแบบเลขหน้าไม่ถูกต้อง ({err})\nใช้ {{page}} แทนเลขหน้า และ {{total}} แทนเลขหน้าสุดท้าย",
         "num.done": "เพิ่มเลขหน้าแล้ว — อย่าลืมบันทึก",
 
+        # ธีม (2.0)
+        "theme.menu": "ธีมและสี",
+        "theme.mode.system": "ตาม Windows",
+        "theme.mode.light": "สว่าง",
+        "theme.mode.dark": "มืด",
+        "theme.accent": "สีหลัก",
+        "theme.accent.ballcar": "แดง Ballcar",
+        "theme.accent.blue": "น้ำเงิน",
+        "theme.accent.green": "เขียว",
+        "theme.accent.purple": "ม่วง",
+        "theme.accent.orange": "ส้ม",
+        "theme.accent.teal": "เขียวอมฟ้า",
+        "theme.accent.custom": "เลือกสีเอง…",
+        "theme.changed": "เปลี่ยนธีมแล้ว",
+
         # แปลงเป็น Word + OCR หน้าสแกน
         "word.ocr_progress": "กำลังอ่านข้อความจากหน้าสแกน {done}/{total}…",
         "word.ocr_title": "แปลงเป็น Word แล้ว",
@@ -756,6 +771,21 @@ TEXTS: dict[str, dict[str, str]] = {
         "num.hint_skip": " · pages 1–{n} get no number",
         "num.bad_format": "Invalid page number format ({err})\nUse {{page}} for the page number and {{total}} for the last number",
         "num.done": "Page numbers added — remember to save",
+
+        # Theme (2.0)
+        "theme.menu": "Theme & Colour",
+        "theme.mode.system": "Follow Windows",
+        "theme.mode.light": "Light",
+        "theme.mode.dark": "Dark",
+        "theme.accent": "Accent colour",
+        "theme.accent.ballcar": "Ballcar red",
+        "theme.accent.blue": "Blue",
+        "theme.accent.green": "Green",
+        "theme.accent.purple": "Purple",
+        "theme.accent.orange": "Orange",
+        "theme.accent.teal": "Teal",
+        "theme.accent.custom": "Custom colour…",
+        "theme.changed": "Theme changed",
 
         # Convert to Word + OCR scanned pages
         "word.ocr_progress": "Reading text from scanned page {done}/{total}…",

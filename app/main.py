@@ -22,12 +22,12 @@ from PySide6.QtWidgets import (
 
 if __package__ in (None, ""):  # รันตรงๆ ด้วย python app/main.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from app import assistant, autosave, batch, errorlog, i18n, library, pdfops, updater
+    from app import assistant, autosave, batch, errorlog, i18n, library, pdfops, theme, updater
     from app.i18n import t
     from app.pdfops import PdfDocument, merge_files, parse_page_ranges
     from app.viewer import PageViewer, pixmap_to_qimage
 else:
-    from . import assistant, autosave, batch, errorlog, i18n, library, pdfops, updater
+    from . import assistant, autosave, batch, errorlog, i18n, library, pdfops, theme, updater
     from .i18n import t
     from .pdfops import PdfDocument, merge_files, parse_page_ranges
     from .viewer import PageViewer, pixmap_to_qimage
@@ -120,22 +120,21 @@ APP_VERSION = app_version()
 PDF_FILTER = "ไฟล์ PDF (*.pdf)"
 
 
-def style_action_bar(bar, name: str, bg: str, border: str) -> None:
-    """จัดสไตล์แถบเครื่องมือ (ลายเซ็น/ข้อความ/ไฮไลต์) — ปุ่มพื้นขาวตัวหนังสือเข้ม เห็นชัด
+def style_action_bar(bar, name: str, kind: str) -> None:
+    """แถบเครื่องมือโหมดแก้ไข (ลายเซ็น/ข้อความ/ไฮไลต์ …) — สีมาจากธีมกลาง (theme.py)
 
-    ต้องกำหนดสไตล์ปุ่มเอง ไม่งั้นพื้นหลังสีของแถบจะตกทอดไปที่ปุ่มจนตัวหนังสือจางมองไม่เห็น
+    kind: info / warn / success / danger / note — สไตล์ปุ่มกำหนดในธีมด้วย
+    ไม่งั้นพื้นหลังสีของแถบจะตกทอดไปที่ปุ่มจนตัวหนังสือจางมองไม่เห็น
     """
     bar.setObjectName(name)
-    bar.setStyleSheet(f"""
-        QWidget#{name} {{ background:{bg}; border-bottom:1px solid {border}; }}
-        QWidget#{name} QLabel {{ background:transparent; }}
-        QWidget#{name} QPushButton {{
-            background:#ffffff; color:#1a1a1a; border:1px solid {border};
-            border-radius:4px; padding:4px 12px; font-weight:500;
-        }}
-        QWidget#{name} QPushButton:hover {{ background:#f0f4ff; border-color:#5b9bd5; }}
-        QWidget#{name} QPushButton:pressed {{ background:#e0e8f5; }}
-    """)
+    bar.setProperty("role", f"modebar-{kind}")
+
+
+def set_invalid(widget, invalid: bool) -> None:
+    """ทำกรอบแดงให้ช่องกรอกที่ค่าไม่ถูกต้อง (สีมาจากธีม) — ต้อง polish ใหม่ให้ QSS อ่านค่าล่าสุด"""
+    widget.setProperty("invalid", bool(invalid))
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
 IMAGE_FILTER = "ไฟล์รูป (*.png *.gif *.jpg *.jpeg *.bmp *.webp *.tif *.tiff)"
 THUMB_ZOOM = 0.22
 
@@ -353,7 +352,7 @@ class PrintDialog(QDialog):
         side.addLayout(form)
 
         # ช่วงหน้า
-        line = QFrame(); line.setFrameShape(QFrame.HLine); line.setStyleSheet("color:#888;")
+        line = QFrame(); line.setFrameShape(QFrame.HLine); line.setProperty("role", "divider")
         side.addWidget(line)
         side.addWidget(QLabel(t("print.pages")))
         self.r_all = QRadioButton(t("print.all_pages", n=self.total))
@@ -379,7 +378,7 @@ class PrintDialog(QDialog):
         side.addWidget(self.reverse)
 
         # ---------- ขนาด/การจัดวางหน้า ----------
-        line2 = QFrame(); line2.setFrameShape(QFrame.HLine); line2.setStyleSheet("color:#888;")
+        line2 = QFrame(); line2.setFrameShape(QFrame.HLine); line2.setProperty("role", "divider")
         side.addWidget(line2)
         side.addWidget(QLabel(t("print.sizing")))
         size_form = QFormLayout()
@@ -412,7 +411,7 @@ class PrintDialog(QDialog):
         side.addWidget(self.duplex)
 
         hint = QLabel(t("print.hint"))
-        hint.setStyleSheet("color:#888; font-size:11px;")
+        hint.setProperty("role", "hint")
         hint.setWordWrap(True)
         side.addWidget(hint)
         side.addStretch(1)
@@ -420,7 +419,7 @@ class PrintDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.print_btn = buttons.button(QDialogButtonBox.Ok)
         self.print_btn.setText(t("print.do_print"))
-        self.print_btn.setStyleSheet("font-weight:bold; padding:6px 16px;")
+        self.print_btn.setProperty("role", "primary")
         buttons.accepted.connect(self._do_print)
         buttons.rejected.connect(self.reject)
         side.addWidget(buttons)
@@ -431,7 +430,7 @@ class PrintDialog(QDialog):
         # ---------- ขวา: ตัวอย่างจริง ----------
         self.preview = QPrintPreviewWidget(self.printer, self)
         self.preview.paintRequested.connect(window.render_print)
-        self.preview.setStyleSheet("background:#666;")
+        self.preview.setObjectName("printPreview")
         root.addWidget(self.preview, 1)
 
         # เลือกเครื่องพิมพ์/จำนวนชุด/สี — ไม่กระทบภาพตัวอย่าง แค่จำค่าไว้ (ไม่ re-render)
@@ -506,7 +505,7 @@ class PrintDialog(QDialog):
         }
         ok = bool(pages)
         self.print_btn.setEnabled(ok)
-        self.range_edit.setStyleSheet("" if ok else "border:1px solid #d33;")
+        set_invalid(self.range_edit, not ok)
 
     def _apply_and_refresh(self) -> None:
         self._apply_settings()
@@ -592,7 +591,6 @@ class MainWindow(QMainWindow):
         bar_layout = QHBoxLayout(self._placing_bar)
         bar_layout.setContentsMargins(8, 4, 8, 4)
         tip = self._placing_tip = QLabel(t("bar.placing_tip"))
-        tip.setStyleSheet("color:#0a58ca; font-weight:bold;")
         ok_btn = self._ok_btn = QPushButton(t("bar.confirm"))
         ok_btn.clicked.connect(self.commit_placement)
         cancel_btn = self._cancel_btn = QPushButton(t("bar.cancel"))
@@ -601,7 +599,7 @@ class MainWindow(QMainWindow):
         bar_layout.addStretch(1)
         bar_layout.addWidget(ok_btn)
         bar_layout.addWidget(cancel_btn)
-        style_action_bar(self._placing_bar, "placingBar", "#e7f1ff", "#9ec5fe")
+        style_action_bar(self._placing_bar, "placingBar", "info")
         self._placing_bar.hide()
 
         # แถบที่โผล่เมื่อคลิกเลือกลายเซ็นที่วางไว้แล้ว
@@ -609,7 +607,6 @@ class MainWindow(QMainWindow):
         stamp_layout = QHBoxLayout(self._stamp_bar)
         stamp_layout.setContentsMargins(8, 4, 8, 4)
         stamp_tip = self._stamp_tip = QLabel(t("bar.stamp_selected"))
-        stamp_tip.setStyleSheet("color:#664d03; font-weight:bold;")
         move_btn = self._move_btn = QPushButton(t("bar.move_resize"))
         move_btn.clicked.connect(self.edit_selected_stamp)
         del_btn = self._del_stamp_btn = QPushButton(t("bar.delete_stamp"))
@@ -624,7 +621,7 @@ class MainWindow(QMainWindow):
         stamp_layout.addStretch(1)
         for b in (move_btn, allpages_btn, save_btn, del_btn, done_btn):
             stamp_layout.addWidget(b)
-        style_action_bar(self._stamp_bar, "stampBar", "#fff3cd", "#ffcf6b")
+        style_action_bar(self._stamp_bar, "stampBar", "warn")
         self._stamp_bar.hide()
         self.viewer.stampSelected.connect(self._on_stamp_selected)
         self.viewer.stampEditRequested.connect(self.edit_selected_stamp)
@@ -640,7 +637,6 @@ class MainWindow(QMainWindow):
         text_layout = QHBoxLayout(self._text_bar)
         text_layout.setContentsMargins(8, 4, 8, 4)
         self._text_tip = QLabel(t("text.selected"))
-        self._text_tip.setStyleSheet("color:#0f5132; font-weight:bold;")
         self._text_edit_btn = QPushButton(t("text.edit"))
         self._text_edit_btn.clicked.connect(self.edit_selected_textbox)
         self._text_move_btn = QPushButton(t("bar.move_resize"))
@@ -659,7 +655,7 @@ class MainWindow(QMainWindow):
         for b in (self._text_edit_btn, self._text_move_btn, self._text_color_btn,
                   self._text_all_btn, self._text_del_btn, self._text_done_btn):
             text_layout.addWidget(b)
-        style_action_bar(self._text_bar, "textBar", "#d1e7dd", "#8fc4a8")
+        style_action_bar(self._text_bar, "textBar", "success")
         self._text_bar.hide()
         self.viewer.textboxSelected.connect(self._on_textbox_selected)
         self.viewer.textboxEditRequested.connect(self.edit_selected_textbox)
@@ -677,7 +673,6 @@ class MainWindow(QMainWindow):
         hl_layout = QHBoxLayout(self._highlight_bar)
         hl_layout.setContentsMargins(8, 4, 8, 4)
         hl_tip = QLabel(t("hl.selected"))
-        hl_tip.setStyleSheet("color:#7a5c00; font-weight:bold;")
         self._highlight_swatch = QLabel()
         self._highlight_swatch.setStyleSheet(
             "background:#ffeb3b; border:1px solid #888; min-width:20px; min-height:16px;")
@@ -692,7 +687,7 @@ class MainWindow(QMainWindow):
         hl_layout.addStretch(1)
         for b in (color_btn, clear_btn, hl_done):
             hl_layout.addWidget(b)
-        style_action_bar(self._highlight_bar, "highlightBar", "#fff8e1", "#ffcf40")
+        style_action_bar(self._highlight_bar, "highlightBar", "warn")
         self._highlight_bar.hide()
 
         # แถบยางลบ/ปิดทับ (สำหรับไฟล์สแกน)
@@ -702,7 +697,6 @@ class MainWindow(QMainWindow):
         er_layout = QHBoxLayout(self._erase_bar)
         er_layout.setContentsMargins(8, 4, 8, 4)
         er_tip = self._erase_tip = QLabel(t("er.selected"))
-        er_tip.setStyleSheet("color:#8a2f2f; font-weight:bold;")
         auto_chk = self._erase_auto_chk = QCheckBox(t("er.auto_color"))
         auto_chk.setChecked(True)
         auto_chk.setToolTip(t("er.auto_color_tip"))
@@ -715,7 +709,7 @@ class MainWindow(QMainWindow):
         er_layout.addStretch(1)
         for wdg in (auto_chk, er_clear, er_done):
             er_layout.addWidget(wdg)
-        style_action_bar(self._erase_bar, "eraseBar", "#fdecec", "#e79a9a")
+        style_action_bar(self._erase_bar, "eraseBar", "danger")
         self._erase_bar.hide()
 
         # แถบวาด/มาร์กอัป (ปากกา/เส้น/ลูกศร/สี่เหลี่ยม/วงกลม)
@@ -726,7 +720,6 @@ class MainWindow(QMainWindow):
         an_layout = QHBoxLayout(self._annot_bar)
         an_layout.setContentsMargins(8, 4, 8, 4)
         an_tip = QLabel(t("an.selected"))
-        an_tip.setStyleSheet("color:#1f5c99; font-weight:bold;")
         an_layout.addWidget(an_tip)
         an_layout.addStretch(1)
         self._annot_tool_btns = {}
@@ -755,7 +748,7 @@ class MainWindow(QMainWindow):
         an_done.clicked.connect(self._end_annot_mode)
         for wdg in (an_color, self._annot_swatch, an_clear, an_done):
             an_layout.addWidget(wdg)
-        style_action_bar(self._annot_bar, "annotBar", "#e7f1ff", "#9ec5fe")
+        style_action_bar(self._annot_bar, "annotBar", "note")
         self._annot_bar.hide()
 
         left = QWidget()
@@ -765,7 +758,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.thumbs)
         hint = self._hint_label = QLabel(t("thumb.hint"))
         hint.setAlignment(Qt.AlignCenter)
-        hint.setStyleSheet("color:#888; font-size:11px; padding:2px;")
+        hint.setProperty("role", "hint")
         left_layout.addWidget(hint)
         # ใช้ความกว้างขั้นต่ำ ไม่ล็อกความกว้างสูงสุด — ไม่งั้นลากเส้นแบ่งขยายไม่ได้
         left.setMinimumWidth(90)
@@ -773,9 +766,6 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(6)          # เส้นแบ่งหนาพอให้จับลากได้ง่าย
         splitter.setChildrenCollapsible(False)   # ลากจนหายทั้งแผงไม่ได้ (กันงง)
-        splitter.setStyleSheet(
-            "QSplitter::handle:horizontal { background:#8a8a8a; margin:0 1px; }"
-            "QSplitter::handle:horizontal:hover { background:#4a90d9; }")
         splitter.addWidget(left)
         splitter.addWidget(self._bookmark_panel)
 
@@ -949,9 +939,7 @@ class MainWindow(QMainWindow):
         self.tools_button.setText(t("tb.tools"))
         self.tools_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.tools_button.setPopupMode(QToolButton.InstantPopup)
-        self.tools_button.setStyleSheet(
-            "QToolButton { font-weight:bold; padding:2px 10px; }"
-            "QToolButton::menu-indicator { subcontrol-position: right center; }")
+        self.tools_button.setObjectName("toolsButton")
         tools_menu = QMenu(self)
         for a in (self.act_add_text, self.act_edit_text, self.act_highlight,
                   self.act_markup, self.act_erase):
@@ -1036,6 +1024,8 @@ class MainWindow(QMainWindow):
         toggle_bm.setChecked(self._bookmark_panel.isVisible())
         toggle_bm.toggled.connect(self._toggle_bookmark_panel)
         m_view.addAction(toggle_bm)
+        m_view.addSeparator()
+        self._build_theme_menu(m_view)
 
         m_lang = menu.addMenu(t("menu.language"))
         for code, key in (("th", "lang.thai"), ("en", "lang.english")):
@@ -1051,6 +1041,55 @@ class MainWindow(QMainWindow):
         m_help.addAction(self._act(t("upd.set_server"), self.set_update_server, icon="🌐"))
         m_help.addSeparator()
         m_help.addAction(self._act(t("help.about"), self.show_about, icon="ℹ️"))
+
+    def _build_theme_menu(self, parent_menu) -> None:
+        """มุมมอง → ธีม (ตาม Windows / สว่าง / มืด) และ สีหลัก"""
+        from PySide6.QtGui import QActionGroup, QPixmap
+
+        m_theme = parent_menu.addMenu(emoji_icon("🎨"), t("theme.menu"))
+        modes = QActionGroup(self)
+        for mode in theme.MODES:
+            action = QAction(t(f"theme.mode.{mode}"), self, checkable=True)
+            action.setChecked(theme.saved_mode() == mode)
+            action.triggered.connect(lambda _=False, m=mode: self.change_theme(mode=m))
+            modes.addAction(action)
+            m_theme.addAction(action)
+
+        m_theme.addSeparator()
+        m_accent = m_theme.addMenu(t("theme.accent"))
+        accents = QActionGroup(self)
+        current = theme.saved_accent()
+        for key, color in theme.ACCENTS.items():
+            dot = QPixmap(14, 14)
+            dot.fill(QColor(color))
+            action = QAction(QIcon(dot), t(f"theme.accent.{key}"), self, checkable=True)
+            action.setChecked(current == key)
+            action.triggered.connect(lambda _=False, k=key: self.change_theme(accent=k))
+            accents.addAction(action)
+            m_accent.addAction(action)
+        m_accent.addSeparator()
+        custom = QAction(t("theme.accent.custom"), self, checkable=True)
+        custom.setChecked(current not in theme.ACCENTS)
+        custom.triggered.connect(self._pick_accent_color)
+        accents.addAction(custom)
+        m_accent.addAction(custom)
+
+    def change_theme(self, mode: str | None = None, accent: str | None = None) -> None:
+        """เปลี่ยนธีม/สีหลัก — มีผลทันที ไม่ต้องปิดโปรแกรม และจำไว้ใช้ครั้งต่อไป"""
+        theme.save(mode=mode, accent=accent)
+        theme.apply(QApplication.instance())
+        self.viewer.update()
+        self.statusBar().showMessage(t("theme.changed"), 3000)
+
+    def _pick_accent_color(self) -> None:
+        from PySide6.QtWidgets import QColorDialog
+        color = QColorDialog.getColor(QColor(theme.resolve_accent(theme.saved_accent())),
+                                      self, t("theme.accent.custom"))
+        if color.isValid():
+            self.change_theme(accent=color.name())
+        # กดยกเลิกแล้ว เครื่องหมายถูกในเมนูต้องกลับไปตรงกับสีที่ใช้อยู่จริง
+        self._build_menu()
+        self._update_state()
 
     def change_language(self, code: str) -> None:
         if code == i18n.current():
@@ -1114,7 +1153,7 @@ class MainWindow(QMainWindow):
         body.setSpacing(2)
 
         name = QLabel(APP_NAME)
-        name.setStyleSheet("font-size:17px; font-weight:bold;")
+        name.setProperty("role", "title")
         body.addWidget(name)
         body.addWidget(QLabel(t("about.version", version=APP_VERSION)))
         body.addSpacing(8)
@@ -1124,14 +1163,14 @@ class MainWindow(QMainWindow):
             body.addWidget(QLabel(t(key)))
         warranty = QLabel(t("about.warranty"))
         warranty.setWordWrap(True)
-        warranty.setStyleSheet("color:#888; font-size:11px;")
+        warranty.setProperty("role", "hint")
         body.addSpacing(4)
         body.addWidget(warranty)
 
         def divider() -> QFrame:
             line = QFrame()
             line.setFrameShape(QFrame.HLine)
-            line.setStyleSheet("color:#888;")
+            line.setProperty("role", "divider")
             return line
 
         # ---- แจ้งปัญหา / เสนอแนะ (บรรทัดเดียว ให้หน้าต่างกะทัดรัด) ----
@@ -1149,7 +1188,7 @@ class MainWindow(QMainWindow):
         body.addWidget(mail)
         hint = QLabel(t("about.contact_hint"))
         hint.setWordWrap(True)
-        hint.setStyleSheet("color:#888; font-size:11px;")
+        hint.setProperty("role", "hint")
         body.addWidget(hint)
 
         # ---- แถวปุ่ม: สนับสนุน (ซ้าย) + OK (ขวา) ----
@@ -1194,7 +1233,7 @@ class MainWindow(QMainWindow):
             missing = QLabel(t("about.qr_missing"))
             missing.setAlignment(Qt.AlignCenter)
             missing.setWordWrap(True)
-            missing.setStyleSheet("color:#888; font-size:11px;")
+            missing.setProperty("role", "hint")
             box.addWidget(missing)
 
         who = QLabel(t("support.promptpay"))
@@ -1927,7 +1966,7 @@ class MainWindow(QMainWindow):
         del_btn.clicked.connect(remove_sel)
 
         hint = QLabel(t("mrg.hint"))
-        hint.setStyleSheet("color:#888; font-size:11px;")
+        hint.setProperty("role", "hint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -2006,7 +2045,7 @@ class MainWindow(QMainWindow):
         sync()
 
         hint = QLabel(t("split.hint"))
-        hint.setStyleSheet("color:#888; font-size:11px;")
+        hint.setProperty("role", "hint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -2111,7 +2150,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(form)
 
         hint = QLabel()
-        hint.setStyleSheet("color:#888; font-size:11px;")
+        hint.setProperty("role", "hint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -2233,7 +2272,7 @@ class MainWindow(QMainWindow):
         form.addRow(t("cmp.level"), level)
         layout.addLayout(form)
         hint = QLabel(t("cmp.hint"))
-        hint.setStyleSheet("color:#888; font-size:11px;")
+        hint.setProperty("role", "hint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -2294,7 +2333,7 @@ class MainWindow(QMainWindow):
             spins[key] = sp
         layout.addLayout(form)
         hint = QLabel(t("crop.hint"))
-        hint.setStyleSheet("color:#888; font-size:11px;")
+        hint.setProperty("role", "hint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -2383,7 +2422,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(form)
 
         hint = QLabel(t("wm.hint"))
-        hint.setStyleSheet("color:#888; font-size:11px;")
+        hint.setProperty("role", "hint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -2987,7 +3026,7 @@ class MainWindow(QMainWindow):
 
         tip = QLabel(t("form.thai_tip"))
         tip.setWordWrap(True)
-        tip.setStyleSheet("color:#664d03;")
+        tip.setProperty("role", "hint")
         outer.addWidget(tip)
 
         buttons = QDialogButtonBox()
@@ -3308,7 +3347,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(4)
 
         header = QLabel(t("bm.title"))
-        header.setStyleSheet("font-weight:bold; padding:2px;")
+        header.setProperty("role", "header")
         layout.addWidget(header)
 
         self._bookmark_tree = QTreeWidget()
@@ -3754,7 +3793,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(editor)
         if history:
             hint = QLabel(t("text.history_hint"))
-            hint.setStyleSheet("color:#666; font-size:11px;")
+            hint.setProperty("role", "hint")
             layout.addWidget(hint)
 
         form = QFormLayout()
@@ -3833,11 +3872,6 @@ class MainWindow(QMainWindow):
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(slot)
             row.addWidget(btn)
-        self._sel_popup.setStyleSheet(
-            "#selPopup { background:#2b2f33; border:1px solid #555; border-radius:6px; }"
-            "#selPopup QPushButton { color:#f0f0f0; background:transparent; border:none;"
-            " padding:4px 10px; }"
-            "#selPopup QPushButton:hover { background:#3d444b; border-radius:4px; }")
         self._sel_popup.hide()
 
         # คีย์ลัดมาตรฐาน — คัดลอกข้อความที่เลือก / เลือกทั้งหน้า
@@ -4343,6 +4377,10 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
+    theme.apply(app)        # ธีม/สีหลักที่ผู้ใช้เลือกไว้ (2.0)
+    # ตั้งเป็น "ตาม Windows" แล้วผู้ใช้สลับโหมดมืด/สว่างของ Windows — เปลี่ยนตามทันที
+    app.styleHints().colorSchemeChanged.connect(
+        lambda _scheme: theme.saved_mode() == "system" and theme.apply(app))
 
     errorlog.setup_logging(APP_VERSION)
 

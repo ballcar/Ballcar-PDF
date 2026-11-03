@@ -190,7 +190,8 @@ class _Canvas(QWidget):
         super().__init__()
         self.v = viewer
         self.setMouseTracking(True)
-        self.setStyleSheet("background:#525659;")
+        self.setObjectName("viewerArea")      # สีพื้นมาจากธีม (theme.py)
+        self.setAttribute(Qt.WA_StyledBackground, True)
 
     def paintEvent(self, event) -> None:
         self.v._paint(self, event)
