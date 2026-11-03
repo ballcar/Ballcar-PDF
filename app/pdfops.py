@@ -304,6 +304,91 @@ def _is_ocr_noise(text: str) -> bool:
     return len(core) <= 2 and not thai_letter and not any("0" <= ch <= "9" for ch in core)
 
 
+def _find_picture_regions(pix: fitz.Pixmap, page_rect: fitz.Rect,
+                          text_lines: list[tuple]) -> list[fitz.Rect]:
+    """หาบริเวณที่เป็นรูปในหน้าสแกน (โลโก้ ลายเซ็น ตราประทับ) — คืนเป็นกรอบในพิกัดหน้า
+
+    วิธี: หาหมึกทั้งหน้า (สีเข้ม หรือสีสด เช่น ลายเซ็นปากกาน้ำเงิน) ลบส่วนที่เป็นบรรทัด
+    ข้อความที่ OCR อ่านได้ออก หมึกที่เหลือรวมกลุ่มกันเป็นก้อน ก้อนที่ใหญ่พอคือรูป
+    """
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:            # ไม่มีไลบรารี — แปลงต่อได้ แค่ไม่มีรูป
+        return []
+
+    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)[:, :, :3]
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    dark = (gray < 170).astype(np.uint8)
+    colored = ((hsv[:, :, 1] > 80) & (hsv[:, :, 2] < 235)).astype(np.uint8)
+
+    # หมึกดำ: ลบส่วนที่เป็นบรรทัดข้อความออก ที่เหลือคือรูปขาวดำ/ลายเซ็นหมึกดำ
+    # หมึกสี (โลโก้สี ลายเซ็นปากกาน้ำเงิน ตราประทับ) นับเป็นรูปเสมอ — OCR มักอ่าน
+    # ลายเซ็น/โลโก้เป็นข้อความขยะ ถ้าลบตามบรรทัดด้วย รูปพวกนี้จะหายไปหมด
+    scale = pix.w / page_rect.width          # พิกเซลต่อพอยต์
+    for _, x0, x1, y0, y1, _ in text_lines:
+        dark[max(0, int((y0 - 3) * scale)):int((y1 + 3) * scale),
+             max(0, int((x0 - 3) * scale)):int((x1 + 3) * scale)] = 0
+    ink = dark | colored
+
+    # ขยายหมึกให้เส้นที่ขาดเป็นช่วง (ลายเซ็น/ตัวอักษรในโลโก้) ต่อกันเป็นก้อนเดียว
+    grow = max(3, int(3 * scale))
+    grown = cv2.dilate(ink, cv2.getStructuringElement(cv2.MORPH_RECT, (grow, grow)))
+    count, _, stats, _ = cv2.connectedComponentsWithStats(grown)
+
+    boxes = []
+    for i in range(1, count):
+        x, y, w, h, _ = stats[i]
+        if w / scale < 25 or h / scale < 12:            # จุดสกปรก/เส้นขอบกระดาษ
+            continue
+        if int(ink[y:y + h, x:x + w].sum()) < 300:       # กรอบใหญ่แต่หมึกน้อย
+            continue
+        boxes.append(fitz.Rect(x, y, x + w, y + h) / scale)
+
+    # รวมก้อนที่อยู่ใกล้กัน (ลายเซ็นที่ยกปากกาเป็นหลายช่วง) เป็นรูปเดียว
+    merged = True
+    while merged:
+        merged = False
+        for a in range(len(boxes)):
+            for b in range(a + 1, len(boxes)):
+                if (boxes[a] + (-12, -12, 12, 12)).intersects(boxes[b]):
+                    boxes[a] = boxes[a] | boxes[b]
+                    del boxes[b]
+                    merged = True
+                    break
+            if merged:
+                break
+    pad = 2
+    return [(r + (-pad, -pad, pad, pad)) & page_rect for r in boxes]
+
+
+def _crop_pixmap(pix: fitz.Pixmap, rect: fitz.Rect, page_rect: fitz.Rect,
+                 blank: list[fitz.Rect] = ()) -> fitz.Pixmap:
+    """ตัดส่วนหนึ่งของภาพทั้งหน้า (rect เป็นพิกัดหน้า) ออกมาเป็นภาพใหม่
+
+    blank: กรอบข้อความที่อยู่ในบริเวณนั้น ระบายหมึกดำในกรอบทิ้ง — ข้อความวางเป็นตัวอักษร
+    แยกอยู่แล้ว ไม่งั้นรูปลายเซ็นจะติดชื่อ/ตำแหน่งที่พิมพ์ทับอยู่มาด้วย ซ้อนกับข้อความจริง
+    หมึกสี (ลายเซ็นปากกาน้ำเงิน) ในกรอบเดียวกันเก็บไว้
+    """
+    import cv2
+    import numpy as np
+
+    scale = pix.w / page_rect.width
+    x0, y0 = max(0, int(rect.x0 * scale)), max(0, int(rect.y0 * scale))
+    x1, y1 = min(pix.w, int(rect.x1 * scale)), min(pix.h, int(rect.y1 * scale))
+    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+    part = np.array(img[y0:y1, x0:x1, :3])
+    plain = cv2.cvtColor(part, cv2.COLOR_RGB2HSV)[:, :, 1] <= 80   # ไม่ใช่หมึกสี
+    for box in blank:
+        bx0, by0 = max(x0, int(box.x0 * scale)), max(y0, int(box.y0 * scale))
+        bx1, by1 = min(x1, int(box.x1 * scale)), min(y1, int(box.y1 * scale))
+        if bx1 > bx0 and by1 > by0:
+            area = (slice(by0 - y0, by1 - y0), slice(bx0 - x0, bx1 - x0))
+            part[area][plain[area]] = 255
+    return fitz.Pixmap(fitz.csRGB, x1 - x0, y1 - y0, part.tobytes(), False)
+
+
 def _merge_ocr_rows(pieces: list[list[dict]]) -> list[tuple]:
     """รวมท่อน OCR ที่อยู่บรรทัดเดียวกันเป็นบรรทัดเดียว คืน (text, x0, x1, y0, y1, baseline)
 
@@ -2474,7 +2559,8 @@ class PdfDocument:
         indexes = range(self.page_count) if indexes is None else sorted(set(indexes))
         return [i for i in indexes if self.needs_ocr(i)]
 
-    def _ocr_text_page(self, page: fitz.Page, language: str, dpi: int) -> fitz.Document:
+    def _ocr_text_page(self, page: fitz.Page, language: str, dpi: int,
+                       pictures: bool = True) -> fitz.Document:
         """อ่านหน้าสแกนด้วย OCR แล้ววางข้อความลงหน้าใหม่ตำแหน่งเดิม (ไม่มีภาพ)
 
         pdf2docx เห็นแต่ข้อความที่มองเห็นได้ — ข้อความ OCR แบบซ่อนใต้ภาพ
@@ -2485,7 +2571,8 @@ class PdfDocument:
         # วางกลับแล้วบรรทัดแตกกระจาย Word ได้ภาษาเพี้ยนทั้งหน้า
         upright_doc = fitz.open()
         upright = upright_doc.new_page(width=page.rect.width, height=page.rect.height)
-        upright.insert_image(upright.rect, pixmap=page.get_pixmap(dpi=dpi))
+        scan = page.get_pixmap(dpi=dpi)
+        upright.insert_image(upright.rect, pixmap=scan)
         textpage = upright.get_textpage_ocr(flags=0, language=language, dpi=dpi,
                                             full=True, tessdata=tessdata_dir())
         pieces = []
@@ -2499,6 +2586,23 @@ class PdfDocument:
         lines = _merge_ocr_rows(pieces)
         out = fitz.open()
         new_page = out.new_page(width=page.rect.width, height=page.rect.height)
+        regions: list[fitz.Rect] = []
+        if pictures:
+            # โลโก้ ลายเซ็น ตราประทับ — ตัดจากภาพสแกนมาวางตำแหน่งเดิม (วางก่อนข้อความ)
+            regions = _find_picture_regions(scan, new_page.rect, lines)
+            # บรรทัดที่จมอยู่ในรูปเกือบทั้งหมด = OCR อ่านโลโก้/ลายเซ็นเป็นข้อความขยะ (เช่น 'ด gn')
+            # รูปมีของจริงอยู่แล้ว ไม่ต้องซ้ำด้วยข้อความเพี้ยน — บรรทัดที่ยื่นออกนอกรูป
+            # (เช่น ชื่อที่พิมพ์ใต้ลายเซ็น) เป็นข้อความจริง เก็บไว้
+            def inside(line):
+                box = fitz.Rect(line[1], line[3], line[2], line[4])
+                area = box.get_area() or 1
+                return any((box & r).get_area() / area > 0.8 for r in regions)
+            lines = [l for l in lines if not inside(l)]
+            # บรรทัดที่เหลือเหลื่อมเข้ามาในรูป (เช่น ชื่อใต้ลายเซ็น) ระบายออกจากรูป
+            text_boxes = [fitz.Rect(l[1], l[3], l[2], l[4]) for l in lines]
+            for rect in regions:
+                new_page.insert_image(rect, pixmap=_crop_pixmap(
+                    scan, rect, new_page.rect, [b for b in text_boxes if b.intersects(rect)]))
         if not lines:
             return out
         # ใช้ขนาดตัวอักษรเดียวทั้งหน้า (OCR เดาขนาดรายคำแกว่งมาก Word จะดูเละ)
@@ -2521,6 +2625,9 @@ class PdfDocument:
         right_edge = new_page.rect.width - 10
         for text, x0, x1, y0, y1, baseline in lines:
             ratio = (y1 - y0) / body_height
+            # บรรทัดที่ทับรูป กรอบสูงเพราะ OCR นับเส้นลายเซ็นเข้าไปด้วย ไม่ใช่หัวเรื่อง
+            if any(fitz.Rect(x0, y0, x1, y1).intersects(r) for r in regions):
+                ratio = 1
             size = body_size if ratio < 1.3 else round(body_size * min(ratio, 3) * 2) / 2
             width = font.text_length(text, fontsize=size)
             if x0 + width > right_edge:        # ล้นขอบกระดาษจริงๆ ค่อยย่อเฉพาะบรรทัดนั้น
@@ -2529,14 +2636,16 @@ class PdfDocument:
         return out
 
     def _replace_scanned_with_text(self, snapshot: fitz.Document, indexes: list[int],
-                                   language: str, dpi: int, progress=None) -> fitz.Document:
+                                   language: str, dpi: int, progress=None,
+                                   pictures: bool = True) -> fitz.Document:
         """คืนสำเนาเอกสารที่หน้าสแกน (ในช่วง indexes) ถูกแทนด้วยหน้าข้อความจาก OCR"""
         out = fitz.open()
         for i in range(snapshot.page_count):
             if i in indexes:
                 if progress:
                     progress(indexes.index(i) + 1, len(indexes))
-                with self._ocr_text_page(snapshot.load_page(i), language, dpi) as piece:
+                with self._ocr_text_page(snapshot.load_page(i), language, dpi,
+                                         pictures) as piece:
                     out.insert_pdf(piece)
             else:
                 out.insert_pdf(snapshot, from_page=i, to_page=i)
@@ -2544,11 +2653,11 @@ class PdfDocument:
 
     def to_word(self, target: str | Path, indexes: list[int] | None = None,
                 ocr: bool = True, language: str = "tha+eng", dpi: int = 300,
-                progress=None) -> Path:
+                progress=None, pictures: bool = True) -> Path:
         """แปลงเป็น .docx (คงหน้าตา/ตาราง/รูปไว้เท่าที่ทำได้)
 
         ocr=True: หน้าที่เป็นภาพสแกนจะอ่านข้อความด้วย OCR ให้ได้ข้อความที่แก้ไขได้
-        (ภาพสแกนเดิม เช่น โลโก้/ลายเซ็นในหน้านั้นจะไม่ติดไปด้วย)
+        pictures=True: โลโก้/ลายเซ็น/ตราประทับในหน้าสแกน ตัดเป็นรูปวางตำแหน่งเดิม
         """
         import logging
 
@@ -2570,7 +2679,7 @@ class PdfDocument:
             self._flatten_textboxes(snapshot)
             if scanned:
                 rebuilt = self._replace_scanned_with_text(snapshot, scanned, language, dpi,
-                                                          progress)
+                                                          progress, pictures)
                 snapshot.close()
                 snapshot = rebuilt
             snapshot.save(str(source))

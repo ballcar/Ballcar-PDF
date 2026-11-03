@@ -311,7 +311,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "word.ocr_done": "มี {n} หน้าเป็นภาพสแกน (หน้า {pages})\n"
                          "โปรแกรมอ่านข้อความด้วย OCR ให้แล้ว แก้ไขใน Word ได้เลย\n\n"
                          "ควรตรวจทานอีกรอบ โดยเฉพาะตัวเลข ชื่อ และอีเมล\n"
-                         "โลโก้และลายเซ็นในหน้าสแกนจะไม่ติดไปด้วย ส่วนตารางจะเป็นข้อความธรรมดา",
+                         "โลโก้ ลายเซ็น และตราประทับติดไปเป็นรูป ส่วนตารางจะเป็นข้อความธรรมดา",
 
         # เซ็นทุกหน้า
         "bar.stamp_all_pages": "⧉ วางทุกหน้า",
@@ -763,7 +763,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "word.ocr_done": "{n} page(s) are scanned images (page {pages})\n"
                          "The text was read with OCR and is editable in Word\n\n"
                          "Please proofread, especially numbers, names and e-mails\n"
-                         "Logos and signatures on scanned pages are not carried over; tables become plain text",
+                         "Logos, signatures and stamps are kept as pictures; tables become plain text",
 
         "bar.stamp_all_pages": "⧉ All pages",
         "bar.stamped_all": "Placed signature on {n} page(s) — remember to save",

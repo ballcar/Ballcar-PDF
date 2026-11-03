@@ -118,6 +118,34 @@ for word in ("Dear Sir", "Unlicensed Use of Software"):
 assert text.index("Dear Sir") < text.index("Unlicensed"), "ลำดับบรรทัดต้องเรียงจากบนลงล่าง"
 print("OK  หน้าสแกนที่ถูกหมุน (/Rotate 270) ได้ข้อความเรียงถูกต้อง")
 
+# ---- โลโก้/ลายเซ็นในหน้าสแกน ต้องติดไปเป็นรูปใน Word ข้อความยังเป็นตัวอักษร ----
+text = fitz.open()
+page = text.new_page(width=595, height=842)
+page.draw_rect(fitz.Rect(60, 30, 110, 80), color=(0, 0.4, 0.2), fill=(0, 0.4, 0.2))   # โลโก้สีเขียว
+page.insert_text((60, 130), "Dear Sir / Madam,", fontsize=16)
+page.insert_text((60, 160), "Please contact us before 12 September 2022.", fontsize=16)
+sig = page.new_shape()                                                       # ลายเซ็นปากกาน้ำเงิน
+sig.draw_bezier((300, 260), (330, 200), (360, 300), (420, 230))
+sig.draw_line((310, 270), (430, 250))
+sig.finish(color=(0.1, 0.3, 0.9), width=2.5)
+sig.commit()
+page.insert_text((300, 300), "(Managing Director)", fontsize=14)
+pix = page.get_pixmap(dpi=200)
+scan = fitz.open()
+scan.new_page(width=595, height=842).insert_image(fitz.Rect(0, 0, 595, 842), pixmap=pix)
+pic_path = tmp / "scan_pictures.pdf"; scan.save(str(pic_path))
+
+out = PdfDocument(pic_path).to_word(tmp / "pictures.docx")
+text = docx_text(out)
+assert "Dear Sir" in text and "Managing Director" in text, text
+assert len(docx_media(out)) == 2, f"ต้องได้รูปโลโก้ + ลายเซ็น 2 รูป: {docx_media(out)}"
+rebuilt = PdfDocument(pic_path)._ocr_text_page(fitz.open(str(pic_path))[0], "tha+eng", 300)
+placed = sorted((fitz.Rect(i["bbox"]) for i in rebuilt[0].get_image_info()), key=lambda r: r.y0)
+assert placed[0].contains(fitz.Rect(62, 32, 108, 78)), f"โลโก้ต้องอยู่ตำแหน่งเดิม: {placed}"
+assert placed[1].intersects(fitz.Rect(300, 200, 430, 270)), f"ลายเซ็นต้องอยู่ตำแหน่งเดิม: {placed}"
+assert docx_media(PdfDocument(pic_path).to_word(tmp / "no_pic.docx", pictures=False)) == []
+print("OK  โลโก้และลายเซ็นในหน้าสแกนติดไปเป็นรูปตำแหน่งเดิม ข้อความยังเป็นตัวอักษร")
+
 # ---- ocr=False ได้แบบเดิม (รูปทั้งหน้า) ----
 out = PdfDocument(scan_en).to_word(tmp / "no_ocr.docx", ocr=False)
 assert docx_media(out) and "Dear" not in docx_text(out)
