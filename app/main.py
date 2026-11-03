@@ -22,14 +22,14 @@ from PySide6.QtWidgets import (
 
 if __package__ in (None, ""):  # รันตรงๆ ด้วย python app/main.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from app import (assistant, autosave, batch, errorlog, homepage, i18n, icons, library,
-                     pdfops, recent, theme, toolpanel, updater)
+    from app import (assistant, assistant_ui, autosave, batch, errorlog, homepage, i18n, icons,
+                     library, pdfops, recent, semantic, theme, toolpanel, updater)
     from app.i18n import t
     from app.pdfops import PdfDocument, merge_files, parse_page_ranges
     from app.viewer import PageViewer, pixmap_to_qimage
 else:
-    from . import (assistant, autosave, batch, errorlog, homepage, i18n, icons, library, pdfops,
-                   recent, theme, toolpanel, updater)
+    from . import (assistant, assistant_ui, autosave, batch, errorlog, homepage, i18n, icons,
+                   library, pdfops, recent, semantic, theme, toolpanel, updater)
     from .i18n import t
     from .pdfops import PdfDocument, merge_files, parse_page_ranges
     from .viewer import PageViewer, pixmap_to_qimage
@@ -3219,41 +3219,51 @@ class MainWindow(QMainWindow):
     def assistant_dialog(self) -> None:
         if not self.doc or not self.doc.page_count:
             return
-        examples = "\n".join(f"•  {e}" for e in assistant.EXAMPLES)
-        command, ok = QInputDialog.getText(
-            self, t("ai.title"),
-            t("ai.prompt") + "\n\n" + t("ai.examples") + "\n" + examples)
-        if not ok or not command.strip():
+        dialog = assistant_ui.AssistantDialog(self, assistant_history(), ai_ready=assistant.has_matcher())
+        if dialog.exec() != QDialog.Accepted or not dialog.command:
             return
-        self.run_assistant_command(command)
+        # เห็นตัวอย่างว่าจะทำอะไรในหน้าต่างแล้ว -> ไม่ถามยืนยันซ้ำ
+        self.run_assistant_command(dialog.command, confirmed=True)
 
-    def run_assistant_command(self, command: str) -> None:
-        intent = assistant.parse(command)
-        if intent is None:
+    def run_assistant_command(self, command: str, confirmed: bool = False) -> None:
+        """ทำตามคำสั่ง (อาจสั่งต่อกันหลายอย่าง) — confirmed=True เมื่อผู้ใช้เห็นตัวอย่างแล้ว
+        ในหน้าต่างผู้ช่วย (ไม่ต้องถามยืนยันซ้ำ)"""
+        intents = assistant.parse_all(command)
+        if not intents:
             examples = "\n".join(f"•  {e}" for e in assistant.EXAMPLES)
+            near = assistant.suggest(command)
+            hint = (t("ai.did_you_mean") + "\n" + "\n".join(f"•  {s}" for s in near) + "\n\n"
+                    if near else "")
             QMessageBox.information(
                 self, t("ai.title"),
-                t("ai.not_understood") + "\n\n" + t("ai.examples") + "\n" + examples)
+                t("ai.not_understood") + "\n\n" + hint + t("ai.examples") + "\n" + examples)
             return
-        if intent.needs_online_ai:
+        online = [i for i in intents if i.needs_online_ai]
+        if online:
             QMessageBox.information(self, t("ai.title"),
-                                   intent.preview + "\n\n" + t("ai.no_ai"))
+                                   online[0].preview + "\n\n" + t("ai.no_ai"))
             return
 
-        # ยืนยันก่อนทำ (แสดงว่าจะทำอะไร)
-        if QMessageBox.question(
-            self, t("ai.confirm_title"),
-            t("ai.will_do", what=intent.preview),
-        ) != QMessageBox.Yes:
-            return
+        if not confirmed:
+            # ยืนยันก่อนทำ (แสดงว่าจะทำอะไร — หลายขั้นแสดงเป็นลำดับ)
+            if QMessageBox.question(
+                self, t("ai.confirm_title"),
+                t("ai.will_do", what=assistant_steps_text(intents)),
+            ) != QMessageBox.Yes:
+                return
 
-        try:
-            msg = self._execute_intent(intent)
-        except Exception as exc:
-            QMessageBox.critical(self, t("ai.title"), str(exc))
-            return
-        self._refresh_all(keep_row=min(self.viewer.index, self.doc.page_count - 1))
-        self.statusBar().showMessage(msg, 8000)
+        messages = []
+        for intent in intents:
+            try:
+                messages.append(self._execute_intent(intent))
+            except Exception as exc:
+                QMessageBox.critical(self, t("ai.title"), str(exc))
+                break
+            if self.doc and self.doc.page_count:
+                self._refresh_all(keep_row=min(self.viewer.index, self.doc.page_count - 1))
+        else:
+            assistant_history_add(command)      # จำเฉพาะคำสั่งที่ทำสำเร็จ
+        self.statusBar().showMessage("  ·  ".join(m for m in messages if m), 8000)
 
     def _execute_intent(self, intent) -> str:
         """ลงมือทำตาม intent คืนข้อความสรุปผล"""
@@ -3268,16 +3278,78 @@ class MainWindow(QMainWindow):
             return t("ai.done_pii", n=n) if n else t("ai.no_pii")
 
         if a == "orientation":
-            n = self.doc.set_orientation(list(range(self.doc.page_count)), p["orientation"])
+            pages = assistant.resolve_pages(p.get("pages"), self.doc.page_count)
+            n = self.doc.set_orientation(pages, p["orientation"])
             return t("ai.done_rotate", n=n)
 
         if a == "rotate":
-            self.doc.rotate_pages(list(range(self.doc.page_count)), p["degrees"])
-            return t("ai.done_rotate", n=self.doc.page_count)
+            pages = assistant.resolve_pages(p.get("pages"), self.doc.page_count)
+            self.doc.rotate_pages(pages, p["degrees"])
+            return t("ai.done_rotate", n=len(pages))
 
         if a == "page_numbers":
-            self.doc.add_page_numbers(fmt="{page}", numeral=p.get("numeral", "arabic"))
+            first = p.get("first_page", 1)
+            if not 1 <= first <= self.doc.page_count:
+                raise ValueError(t("ai.no_such_page", n=first, total=self.doc.page_count))
+            self.doc.add_page_numbers(fmt="{page}", numeral=p.get("numeral", "arabic"),
+                                      first_page=first - 1, start_at=p.get("start_at", 1))
             return t("ai.done_numbers")
+
+        if a == "delete_pages":
+            pages = assistant.resolve_pages(p["pages"], self.doc.page_count)
+            self.doc.delete_pages(pages)
+            return t("ai.done_delete", n=len(pages))
+
+        if a == "move_page":
+            total = self.doc.page_count
+            source = p["source"]
+            dest = total if p["dest"] == -1 else p["dest"]
+            for n in (source, dest):
+                if not 1 <= n <= total:
+                    raise ValueError(t("ai.no_such_page", n=n, total=total))
+            # move_page(src, dst) วางก่อนตำแหน่ง dst — ย้ายลงต้องเลยไปอีกหนึ่ง
+            # ย้ายไปท้ายสุดต้องใช้ -1 (PyMuPDF ไม่รับตำแหน่ง = จำนวนหน้า)
+            if dest > source:
+                target = -1 if dest == total else dest
+            else:
+                target = dest - 1
+            self.doc.move_page(source - 1, target)
+            self.viewer.index = dest - 1
+            return t("ai.done_move", src=source, dst=dest)
+
+        if a == "insert_blank":
+            at = self.doc.page_count if p.get("at") is None else p["at"]
+            if not 0 <= at <= self.doc.page_count:
+                raise ValueError(t("ai.no_such_page", n=at, total=self.doc.page_count))
+            self.doc.insert_blank_page(at)
+            self.viewer.index = at
+            return t("ai.done_insert_blank", n=at + 1)
+
+        if a == "extract_pages":
+            pages = assistant.resolve_pages(p["pages"], self.doc.page_count)
+            stem = self.doc.path.stem if self.doc.path else "เอกสาร"
+            first, last = pages[0] + 1, pages[-1] + 1
+            span = str(first) if first == last else f"{first}-{last}"
+            folder = self.doc.path.parent if self.doc.path else Path.home()
+            default = str(folder / f"{stem} (หน้า {span}).pdf")
+            target, _ = QFileDialog.getSaveFileName(self, t("ai.title"), default, PDF_FILTER)
+            if not target:
+                return t("ai.cancelled")
+            self.doc.save_pages_as(pages, target)
+            return t("ai.done_extract", n=len(pages), target=target)
+
+        if a == "split_each":
+            folder = QFileDialog.getExistingDirectory(
+                self, t("ai.title"), str(self.doc.path.parent) if self.doc.path else "")
+            if not folder:
+                return t("ai.cancelled")
+            written = self.doc.split_to_files(folder, per_file=1)
+            return t("split.done_many", n=len(written), folder=folder)
+
+        if a == "open_tool":
+            # เปิดเครื่องมือในเมนูตัวเดิม (ถามที่บันทึก/ตัวเลือกเองตามปกติ)
+            getattr(self, p["method"])()
+            return ""
 
         if a == "keep_matching":
             matches = self.doc.pages_matching(p["keyword"])
@@ -4300,6 +4372,24 @@ class MainWindow(QMainWindow):
 
 
 
+def assistant_steps_text(intents) -> str:
+    """ข้อความแสดงสิ่งที่ผู้ช่วยจะทำ — หลายขั้นแสดงเป็นลำดับ 1. 2. 3."""
+    if len(intents) == 1:
+        return intents[0].preview
+    return "\n" + "\n".join(f"{n}. {i.preview}" for n, i in enumerate(intents, start=1))
+
+
+def assistant_history() -> list[str]:
+    """คำสั่งที่เคยสั่งสำเร็จล่าสุด (ใหม่สุดอยู่หน้า) — กดซ้ำได้จากหน้าต่างผู้ช่วย"""
+    return list(i18n.get_setting("assistant_history", []) or [])
+
+
+def assistant_history_add(command: str) -> None:
+    command = command.strip()
+    items = [c for c in assistant_history() if c != command]
+    i18n.set_setting("assistant_history", [command, *items][:8])
+
+
 def _system_default_printer() -> str:
     """ชื่อเครื่องพิมพ์หลัก (Default) ที่ตั้งไว้ใน Windows — ไม่มีคืน ""
 
@@ -4585,6 +4675,8 @@ def main() -> None:
         return   # มีหน้าต่างเปิดอยู่แล้ว เด้งตัวนั้นขึ้นมาแทน
 
     window = MainWindow()
+    # AI จับความหมายของผู้ช่วย — โหลดเบื้องหลัง ไม่ทำให้เปิดโปรแกรมช้า (ไม่มีไฟล์โมเดลก็ข้าม)
+    semantic.load_in_background()
     # ตั้งเป็น "ตาม Windows" แล้วผู้ใช้สลับโหมดมืด/สว่างของ Windows — เปลี่ยนตามทันที
     # (ไอคอนต้องเปลี่ยนสีตามด้วย ไม่ใช่แค่พื้นหลัง จึงผ่าน change_theme)
     app.styleHints().colorSchemeChanged.connect(

@@ -44,6 +44,10 @@ if (-not $qrArgs) { Write-Host "ไม่พบรูป QR - หน้าต่
     --exclude-module PySide6.QtWebEngineCore `
     --exclude-module PySide6.QtMultimedia `
     --exclude-module tkinter `
+    --exclude-module huggingface_hub `
+    --exclude-module hf_xet `
+    --exclude-module httpx2 `
+    --exclude-module httpcore2 `
     app\main.py
 
 if ($LASTEXITCODE -eq 0) {

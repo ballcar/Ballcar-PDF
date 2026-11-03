@@ -1171,7 +1171,10 @@ class PdfDocument:
         self.doc.move_page(source, dest)
         # เทียบลำดับเดิม -> ใหม่ เพื่อย้ายของลอยตามหน้าไปด้วย
         moved = before.pop(source)
-        before.insert(dest if dest <= source else dest - 1, moved)
+        if dest < 0:                     # -1 = ไปท้ายสุด
+            before.append(moved)
+        else:
+            before.insert(dest if dest <= source else dest - 1, moved)
         new_of = {old: new for new, old in enumerate(before)}
         self._remap_floating(lambda p: new_of.get(p, p))
         self.dirty = True
@@ -2158,6 +2161,20 @@ class PdfDocument:
         if changed:
             self.rotate_pages(changed, 90)   # push_undo อยู่ข้างใน
         return len(changed)
+
+    def save_pages_as(self, indexes: list[int], target: str | Path) -> Path:
+        """บันทึกเฉพาะหน้าที่ระบุเป็นไฟล์ใหม่ (ไฟล์ที่เปิดอยู่ไม่เปลี่ยน)"""
+        pages = sorted(set(i for i in indexes if 0 <= i < self.page_count))
+        if not pages:
+            raise ValueError("ไม่มีหน้าที่จะบันทึก")
+        # ฝังวัตถุลอย (ข้อความ/ลายเซ็น/ลายน้ำ) ก่อน ไม่งั้นของที่เพิ่มไว้จะหายจากไฟล์ใหม่
+        with self.flattened() as flat:
+            out = fitz.open()
+            for i in pages:
+                out.insert_pdf(flat, from_page=i, to_page=i)
+            out.save(str(target), garbage=3, deflate=True)
+            out.close()
+        return Path(target)
 
     def keep_only_pages(self, indexes: list[int]) -> int:
         """เก็บไว้เฉพาะหน้าที่ระบุ ลบที่เหลือ คืนจำนวนหน้าที่เหลือ"""

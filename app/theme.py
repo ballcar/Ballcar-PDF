@@ -207,6 +207,17 @@ def stylesheet(p: Palette) -> str:
         QToolButton[role="tool"]:hover {{ background:{hover}; }}
         QToolButton[role="tool"]:pressed {{ background:{pressed}; }}
         QToolButton[role="tool"]:disabled {{ color:{p.text_muted}; }}
+        #assistantInput {{ font-size:15px; padding:8px 10px; border:1px solid {p.border};
+                           border-radius:6px; }}
+        #assistantInput:focus {{ border:1px solid {p.accent}; }}
+        #assistantPreview {{ font-size:14px; padding:8px 10px; border-radius:6px; }}
+        #assistantPreview[state="ok"] {{ background:{p.success[0]}; color:{p.success[2]};
+                                         border:1px solid {p.success[1]}; }}
+        #assistantPreview[state="bad"] {{ background:{p.warn[0]}; color:{p.warn[2]};
+                                          border:1px solid {p.warn[1]}; }}
+        QPushButton[role="chip"] {{ background:{p.surface_alt}; color:{p.text};
+            border:1px solid {p.border}; border-radius:12px; padding:4px 10px; text-align:left; }}
+        QPushButton[role="chip"]:hover {{ border-color:{p.accent}; background:{hover}; }}
         #homePage {{ background:{p.window}; }}
         QLabel[role="homeTitle"] {{ font-size:26px; font-weight:bold; color:{p.text}; }}
         QPushButton[role="card"] {{ background:{p.surface}; color:{p.text}; text-align:left;

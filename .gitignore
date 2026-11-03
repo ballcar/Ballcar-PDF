@@ -29,3 +29,6 @@ sp3.png
 # ไฟล์เฉพาะเครื่อง
 Thumbs.db
 .DS_Store
+
+# โมเดล AI (ไฟล์ใหญ่ ไม่ขึ้น git — โหลดตาม models/README ใน semantic.py)
+models/
