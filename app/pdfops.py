@@ -292,8 +292,16 @@ def _join_ocr_spans(spans: list[dict]) -> str:
 
 
 def _is_ocr_noise(text: str) -> bool:
-    """บรรทัดที่มีแต่สัญลักษณ์ (มักเกิดจากเส้นตาราง/รอยเปื้อนในภาพสแกน)"""
-    return not any(ch.isalnum() for ch in text)
+    """บรรทัดขยะจากภาพสแกน: มีแต่สัญลักษณ์ (เส้นตาราง/รอยเปื้อน)
+    หรือเศษ 1–2 ตัวที่ไม่ใช่อักษรไทย/ตัวเลข (เช่น 'Aw' 'ay' '๕' จากลายเซ็น/แถว ****)
+
+    เศษอักษรไทยห้ามทิ้ง — OCR มักแยกส่วนของคำออกเป็นบรรทัดเอง เช่น 'ด้' ของ 'ด้วย'
+    """
+    if not any(ch.isalnum() for ch in text):
+        return True
+    core = [ch for ch in text if not ch.isspace() and ch not in _THAI_MARKS]
+    thai_letter = any("ก" <= ch <= "ๆ" for ch in core)    # ไม่รวมเลขไทย ๐–๙
+    return len(core) <= 2 and not thai_letter and not any("0" <= ch <= "9" for ch in core)
 
 
 @dataclass
@@ -2383,10 +2391,16 @@ class PdfDocument:
         pdf2docx เห็นแต่ข้อความที่มองเห็นได้ — ข้อความ OCR แบบซ่อนใต้ภาพ
         (ocr_to_searchable) แปลงแล้วยังได้แต่รูป จึงต้องวางเป็นข้อความจริงแทนภาพ
         """
-        textpage = page.get_textpage_ocr(flags=0, language=language, dpi=dpi,
-                                         full=True, tessdata=tessdata_dir())
+        # เรนเดอร์เป็นภาพตั้งตรงก่อน แล้ว OCR ภาพนั้น — เครื่องสแกนบางรุ่นเก็บหน้าแบบหมุน
+        # (/Rotate 270) ถ้า OCR หน้าเดิมตรงๆ พิกัดคำจะอยู่ในระบบที่ยังไม่หมุน
+        # วางกลับแล้วบรรทัดแตกกระจาย Word ได้ภาษาเพี้ยนทั้งหน้า
+        upright_doc = fitz.open()
+        upright = upright_doc.new_page(width=page.rect.width, height=page.rect.height)
+        upright.insert_image(upright.rect, pixmap=page.get_pixmap(dpi=dpi))
+        textpage = upright.get_textpage_ocr(flags=0, language=language, dpi=dpi,
+                                            full=True, tessdata=tessdata_dir())
         lines = []
-        for block in page.get_text("dict", textpage=textpage)["blocks"]:
+        for block in upright.get_text("dict", textpage=textpage)["blocks"]:
             for line in block.get("lines", []):
                 spans = [s for s in line["spans"] if s["text"].strip()]
                 text = _join_ocr_spans(spans) if spans else ""
@@ -2398,6 +2412,7 @@ class PdfDocument:
                 y1 = max(s["bbox"][3] for s in spans)
                 baseline = sorted(s["origin"][1] for s in spans)[len(spans) // 2]
                 lines.append((text, x0, x1, y0, y1, baseline))
+        upright_doc.close()
 
         out = fitz.open()
         new_page = out.new_page(width=page.rect.width, height=page.rect.height)

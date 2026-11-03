@@ -76,6 +76,22 @@ text = docx_text(PdfDocument(scan_th).to_word(tmp / "scan_th.docx"))
 assert "บริษัท" in text and "ทดสอบ" in text and "สินค" in text, text
 print("OK  ไฟล์สแกนภาษาไทยได้ข้อความไทยใน Word")
 
+# ---- หน้าสแกนที่เครื่องสแกนเก็บแบบหมุน (/Rotate 270) ต้องได้ข้อความเรียงถูก ----
+# เคยพัง: พิกัด OCR อยู่ในระบบที่ยังไม่หมุน บรรทัดแตกกระจาย Word ได้ภาษาเพี้ยนทั้งหน้า
+src = fitz.open(str(scan_en))
+pix = src[0].get_pixmap(dpi=200)
+rotated = fitz.open()
+page = rotated.new_page(width=842, height=595)      # เก็บภาพแนวนอน แล้วสั่งหมุนตอนแสดง
+page.insert_image(page.rect, pixmap=pix, rotate=270)
+page.set_rotation(270)
+rot_path = tmp / "rotated.pdf"; rotated.save(str(rot_path))
+assert fitz.open(str(rot_path))[0].rect.width < fitz.open(str(rot_path))[0].rect.height
+text = docx_text(PdfDocument(rot_path).to_word(tmp / "rotated.docx"))
+for word in ("Dear Sir", "Unlicensed Use of Software"):
+    assert word in text, f"หน้าหมุน: ไม่พบ {word!r} ใน {text[:200]!r}"
+assert text.index("Dear Sir") < text.index("Unlicensed"), "ลำดับบรรทัดต้องเรียงจากบนลงล่าง"
+print("OK  หน้าสแกนที่ถูกหมุน (/Rotate 270) ได้ข้อความเรียงถูกต้อง")
+
 # ---- ocr=False ได้แบบเดิม (รูปทั้งหน้า) ----
 out = PdfDocument(scan_en).to_word(tmp / "no_ocr.docx", ocr=False)
 assert docx_media(out) and "Dear" not in docx_text(out)
