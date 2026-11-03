@@ -305,6 +305,14 @@ TEXTS: dict[str, dict[str, str]] = {
         "num.bad_format": "รูปแบบเลขหน้าไม่ถูกต้อง ({err})\nใช้ {{page}} แทนเลขหน้า และ {{total}} แทนเลขหน้าสุดท้าย",
         "num.done": "เพิ่มเลขหน้าแล้ว — อย่าลืมบันทึก",
 
+        # แปลงเป็น Word + OCR หน้าสแกน
+        "word.ocr_progress": "กำลังอ่านข้อความจากหน้าสแกน {done}/{total}…",
+        "word.ocr_title": "แปลงเป็น Word แล้ว",
+        "word.ocr_done": "มี {n} หน้าเป็นภาพสแกน (หน้า {pages})\n"
+                         "โปรแกรมอ่านข้อความด้วย OCR ให้แล้ว แก้ไขใน Word ได้เลย\n\n"
+                         "ควรตรวจทานอีกรอบ โดยเฉพาะตัวเลข ชื่อ และอีเมล\n"
+                         "โลโก้และลายเซ็นในหน้าสแกนจะไม่ติดไปด้วย ส่วนตารางจะเป็นข้อความธรรมดา",
+
         # เซ็นทุกหน้า
         "bar.stamp_all_pages": "⧉ วางทุกหน้า",
         "bar.stamped_all": "วางลายเซ็น {n} หน้าแล้ว — อย่าลืมบันทึก",
@@ -748,6 +756,14 @@ TEXTS: dict[str, dict[str, str]] = {
         "num.hint_skip": " · pages 1–{n} get no number",
         "num.bad_format": "Invalid page number format ({err})\nUse {{page}} for the page number and {{total}} for the last number",
         "num.done": "Page numbers added — remember to save",
+
+        # Convert to Word + OCR scanned pages
+        "word.ocr_progress": "Reading text from scanned page {done}/{total}…",
+        "word.ocr_title": "Converted to Word",
+        "word.ocr_done": "{n} page(s) are scanned images (page {pages})\n"
+                         "The text was read with OCR and is editable in Word\n\n"
+                         "Please proofread, especially numbers, names and e-mails\n"
+                         "Logos and signatures on scanned pages are not carried over; tables become plain text",
 
         "bar.stamp_all_pages": "⧉ All pages",
         "bar.stamped_all": "Placed signature on {n} page(s) — remember to save",

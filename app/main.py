@@ -2609,15 +2609,28 @@ class MainWindow(QMainWindow):
         if not target:
             return
 
+        # หน้าที่เป็นภาพสแกน ต้องอ่านด้วย OCR ก่อน ไม่งั้นได้ Word ที่เป็นรูปทั้งหน้า
+        scanned = self.doc.scanned_pages(indexes)
+
+        def report(done, total):
+            self.statusBar().showMessage(t("word.ocr_progress", done=done, total=total), 0)
+            QApplication.processEvents()
+
         self._busy("กำลังแปลงเป็น Word… (ไฟล์ใหญ่อาจใช้เวลาสักครู่)")
         try:
-            self.doc.to_word(target, indexes)
+            self.doc.to_word(target, indexes, progress=report)
         except Exception as exc:
             QMessageBox.critical(self, "แปลงไม่สำเร็จ", str(exc))
             return
         finally:
             self._done_busy()
         self.statusBar().showMessage(f"แปลงเป็น Word แล้ว: {target}", 8000)
+        if scanned:
+            QMessageBox.information(
+                self, t("word.ocr_title"),
+                t("word.ocr_done", n=len(scanned),
+                  pages=", ".join(str(i + 1) for i in scanned[:10])
+                  + (" …" if len(scanned) > 10 else "")))
 
     def export_excel(self) -> None:
         indexes = self._ask_scope("ดึงตารางเป็น Excel")

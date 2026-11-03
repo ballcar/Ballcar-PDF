@@ -256,6 +256,46 @@ def _has_thai(text: str) -> bool:
     return any("฀" <= ch <= "๿" for ch in text)
 
 
+# สระบน/ล่าง/วรรณยุกต์ไทย — ห้ามมีช่องว่างคั่นหน้าตัวเหล่านี้
+_THAI_MARKS = set("ัิีึืฺุู็่้๊๋์ํ๎")
+
+
+def _join_ocr_spans(spans: list[dict]) -> str:
+    """ต่อชิ้นข้อความ OCR ในบรรทัดเดียวกันเป็นประโยค
+
+    Tesseract คืนภาษาไทยเป็นชิ้นย่อยระดับตัวอักษร (เช่น 'บ','ร','ิ','ษั')
+    ถ้าคั่นทุกชิ้นด้วยช่องว่างจะอ่านไม่ออก — จึงเว้นวรรคเฉพาะตรงที่ในภาพมีช่องว่างจริง
+    """
+    out = ""
+    prev = None
+    for span in spans:
+        text = span["text"]
+        if prev is not None:
+            gap = span["bbox"][0] - prev["bbox"][2]
+            height = prev["bbox"][3] - prev["bbox"][1]
+            # คำอังกฤษ/ตัวเลข OCR คืนมาทีละคำ -> เว้นวรรคเกือบเสมอ
+            # ไทยคืนมาทีละตัวอักษร (กรอบแต่ละตัวแคบกว่าจริง) -> เว้นเฉพาะช่องว่างที่กว้างมาก
+            # ภาษาไทยไม่เว้นวรรคระหว่างคำอยู่แล้ว ขาดวรรคดีกว่าวรรคผิดกลางคำ
+            thai = _has_thai(out[-1:]) and _has_thai(text.lstrip()[:1])
+            limit = height * (0.8 if thai else 0.05)
+            if (gap > limit and not out.endswith(" ") and not text.startswith(" ")
+                    and text.lstrip()[:1] not in _THAI_MARKS):
+                out += " "
+        out += text
+        prev = span
+    out = " ".join(out.split())
+    # OCR มักแยก "ำ" เป็นนิคหิต + สระอา และเว้นวรรคหน้าสระบน/ล่าง
+    out = out.replace("ํ า", "ำ").replace("ํา", "ำ")
+    for mark in _THAI_MARKS:
+        out = out.replace(" " + mark, mark)
+    return out
+
+
+def _is_ocr_noise(text: str) -> bool:
+    """บรรทัดที่มีแต่สัญลักษณ์ (มักเกิดจากเส้นตาราง/รอยเปื้อนในภาพสแกน)"""
+    return not any(ch.isalnum() for ch in text)
+
+
 @dataclass
 class Stamp:
     """ลายเซ็น/ตราประทับที่ยังแก้ไขได้ — ยังไม่ฝังลงไฟล์จนกว่าจะกดบันทึก"""
@@ -2332,8 +2372,74 @@ class PdfDocument:
 
     # ---------- แปลงเป็น Word / Excel ----------
 
-    def to_word(self, target: str | Path, indexes: list[int] | None = None) -> Path:
-        """แปลงเป็น .docx (คงหน้าตา/ตาราง/รูปไว้เท่าที่ทำได้)"""
+    def scanned_pages(self, indexes: list[int] | None = None) -> list[int]:
+        """หน้าไหนเป็นภาพสแกน (ไม่มีข้อความในไฟล์) — ใช้บอกผู้ใช้ก่อนแปลงว่าจะต้อง OCR"""
+        indexes = range(self.page_count) if indexes is None else sorted(set(indexes))
+        return [i for i in indexes if self.needs_ocr(i)]
+
+    def _ocr_text_page(self, page: fitz.Page, language: str, dpi: int) -> fitz.Document:
+        """อ่านหน้าสแกนด้วย OCR แล้ววางข้อความลงหน้าใหม่ตำแหน่งเดิม (ไม่มีภาพ)
+
+        pdf2docx เห็นแต่ข้อความที่มองเห็นได้ — ข้อความ OCR แบบซ่อนใต้ภาพ
+        (ocr_to_searchable) แปลงแล้วยังได้แต่รูป จึงต้องวางเป็นข้อความจริงแทนภาพ
+        """
+        textpage = page.get_textpage_ocr(flags=0, language=language, dpi=dpi,
+                                         full=True, tessdata=tessdata_dir())
+        lines = []
+        for block in page.get_text("dict", textpage=textpage)["blocks"]:
+            for line in block.get("lines", []):
+                spans = [s for s in line["spans"] if s["text"].strip()]
+                text = _join_ocr_spans(spans) if spans else ""
+                if not text or _is_ocr_noise(text):
+                    continue
+                x0 = min(s["bbox"][0] for s in spans)
+                x1 = max(s["bbox"][2] for s in spans)
+                y0 = min(s["bbox"][1] for s in spans)
+                y1 = max(s["bbox"][3] for s in spans)
+                baseline = sorted(s["origin"][1] for s in spans)[len(spans) // 2]
+                lines.append((text, x0, x1, y0, y1, baseline))
+
+        out = fitz.open()
+        new_page = out.new_page(width=page.rect.width, height=page.rect.height)
+        if not lines:
+            return out
+        # ใช้ขนาดตัวอักษรเดียวทั้งหน้า (OCR เดาขนาดรายคำแกว่งมาก Word จะดูเละ)
+        # เว้นบรรทัดที่สูงกว่าปกติชัดเจน เช่น หัวเรื่อง ให้ใหญ่ตามจริง
+        heights = sorted(y1 - y0 for _, _, _, y0, y1, _ in lines)
+        body_height = heights[len(heights) // 2]
+        body_size = round(body_height * 0.92 * 2) / 2
+        # ฝังฟอนต์ครั้งเดียวต่อหน้า (ฟอนต์ไทยมีตัวอังกฤษด้วย ใช้ได้ทั้งหน้า)
+        fontname, font = self._register_font(new_page, " ".join(l[0] for l in lines))
+        for text, x0, x1, y0, y1, baseline in lines:
+            size = body_size if (y1 - y0) < body_height * 1.4 else round((y1 - y0) * 0.85)
+            width = font.text_length(text, fontsize=size)
+            if width > (x1 - x0) * 1.08:      # ฟอนต์เรากว้างกว่าในภาพ ย่อให้อยู่ในบรรทัดเดิม
+                size = max(5, size * (x1 - x0) * 1.08 / width)
+            new_page.insert_text((x0, baseline), text, fontname=fontname, fontsize=size)
+        return out
+
+    def _replace_scanned_with_text(self, snapshot: fitz.Document, indexes: list[int],
+                                   language: str, dpi: int, progress=None) -> fitz.Document:
+        """คืนสำเนาเอกสารที่หน้าสแกน (ในช่วง indexes) ถูกแทนด้วยหน้าข้อความจาก OCR"""
+        out = fitz.open()
+        for i in range(snapshot.page_count):
+            if i in indexes:
+                if progress:
+                    progress(indexes.index(i) + 1, len(indexes))
+                with self._ocr_text_page(snapshot.load_page(i), language, dpi) as piece:
+                    out.insert_pdf(piece)
+            else:
+                out.insert_pdf(snapshot, from_page=i, to_page=i)
+        return out
+
+    def to_word(self, target: str | Path, indexes: list[int] | None = None,
+                ocr: bool = True, language: str = "tha+eng", dpi: int = 300,
+                progress=None) -> Path:
+        """แปลงเป็น .docx (คงหน้าตา/ตาราง/รูปไว้เท่าที่ทำได้)
+
+        ocr=True: หน้าที่เป็นภาพสแกนจะอ่านข้อความด้วย OCR ให้ได้ข้อความที่แก้ไขได้
+        (ภาพสแกนเดิม เช่น โลโก้/ลายเซ็นในหน้านั้นจะไม่ติดไปด้วย)
+        """
         import logging
 
         from pdf2docx import Converter
@@ -2342,12 +2448,21 @@ class PdfDocument:
         root = logging.getLogger()
         previous_level = root.level
 
+        scanned = self.scanned_pages(indexes) if ocr else []
+        if scanned:
+            ensure_tesseract()
+
         # pdf2docx อ่านจากไฟล์ จึงต้องเขียนสภาพปัจจุบัน (รวมลายเซ็น) ลงไฟล์ชั่วคราวก่อน
         with tempfile.TemporaryDirectory() as work:
             source = Path(work) / "source.pdf"
             snapshot = fitz.open("pdf", self.doc.tobytes())
             self._flatten_stamps(snapshot)
             self._flatten_textboxes(snapshot)
+            if scanned:
+                rebuilt = self._replace_scanned_with_text(snapshot, scanned, language, dpi,
+                                                          progress)
+                snapshot.close()
+                snapshot = rebuilt
             snapshot.save(str(source))
             snapshot.close()
 
