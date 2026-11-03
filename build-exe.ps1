@@ -36,6 +36,7 @@ if (-not $qrArgs) { Write-Host "ไม่พบรูป QR - หน้าต่
     --add-data "logo\Ballcar PDF.ico;logo" `
     --add-data "version.json;." `
     --add-data "tessdata;tessdata" `
+    --add-data "app\icons;app\icons" `
     @qrArgs `
     --exclude-module PySide6.QtQuick `
     --exclude-module PySide6.QtQml `

@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy,
                                QToolButton, QVBoxLayout, QWidget)
 
@@ -44,6 +44,7 @@ class ToolButton(QToolButton):
         self.setText(short_name(action.text()))
         self.setToolTip(action.text().replace("&", ""))      # ชื่อเต็ม
         self.setProperty("role", "tool")
+        self.setIconSize(QSize(ToolPanel.ICON_SIZE, ToolPanel.ICON_SIZE))
         self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setAutoRaise(True)
@@ -56,8 +57,9 @@ class ToolButton(QToolButton):
 
 
 class ToolPanel(QWidget):
-    WIDTH = 220
-    COLLAPSED_WIDTH = 46       # ยุบแล้วเหลือแถบไอคอน (ชื่อเครื่องมือดูได้จาก tooltip)
+    WIDTH = 236
+    COLLAPSED_WIDTH = 54       # ยุบแล้วเหลือแถบไอคอน (ชื่อเครื่องมือดูได้จาก tooltip)
+    ICON_SIZE = 20
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)

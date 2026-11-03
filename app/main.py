@@ -22,14 +22,14 @@ from PySide6.QtWidgets import (
 
 if __package__ in (None, ""):  # รันตรงๆ ด้วย python app/main.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from app import (assistant, autosave, batch, errorlog, homepage, i18n, library, pdfops,
-                     recent, theme, toolpanel, updater)
+    from app import (assistant, autosave, batch, errorlog, homepage, i18n, icons, library,
+                     pdfops, recent, theme, toolpanel, updater)
     from app.i18n import t
     from app.pdfops import PdfDocument, merge_files, parse_page_ranges
     from app.viewer import PageViewer, pixmap_to_qimage
 else:
-    from . import (assistant, autosave, batch, errorlog, homepage, i18n, library, pdfops, recent,
-                   theme, toolpanel, updater)
+    from . import (assistant, autosave, batch, errorlog, homepage, i18n, icons, library, pdfops,
+                   recent, theme, toolpanel, updater)
     from .i18n import t
     from .pdfops import PdfDocument, merge_files, parse_page_ranges
     from .viewer import PageViewer, pixmap_to_qimage
@@ -890,7 +890,8 @@ class MainWindow(QMainWindow):
             action.setShortcut(QKeySequence(shortcut))
         action.setToolTip(tip or text)
         if icon:
-            action.setIcon(emoji_icon(icon))
+            # 2.0: ชื่อไอคอน Lucide (เปลี่ยนสีตามธีม) — ยังรับอิโมจิได้เผื่อจุดที่ยังไม่ได้ย้าย
+            action.setIcon(icons.icon(icon) if icons.available(icon) else emoji_icon(icon))
             action.setIconVisibleInMenu(True)
         return action
 
@@ -899,28 +900,28 @@ class MainWindow(QMainWindow):
         # ปุ่มที่ใช้บ่อยเป็นไอคอน (มี tooltip) ให้แถบกระชับ พอดีทุกจอ
         # เมนูบนด้านบนยังมีข้อความครบทุกคำสั่งสำหรับคนที่ไม่คุ้นไอคอน
         bar.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        bar.setIconSize(QSize(22, 22))
+        bar.setIconSize(QSize(26, 26))      # 2.0: ใหญ่ขึ้นนิด ดูง่าย
         self.addToolBar(bar)
         self._toolbar = bar
 
-        self.act_open = self._act(t("file.open"), self.open_file, "Ctrl+O", icon="📂")
-        self.act_save = self._act(t("file.save"), self.save_file, "Ctrl+S", icon="💾")
-        self.act_save_as = self._act(t("file.save_as"), self.save_file_as, "Ctrl+Shift+S", icon="📝")
-        self.act_print = self._act(t("file.print"), self.print_document, "Ctrl+P", icon="🖨")
+        self.act_open = self._act(t("file.open"), self.open_file, "Ctrl+O", icon="folder-open")
+        self.act_save = self._act(t("file.save"), self.save_file, "Ctrl+S", icon="save")
+        self.act_save_as = self._act(t("file.save_as"), self.save_file_as, "Ctrl+Shift+S", icon="save-all")
+        self.act_print = self._act(t("file.print"), self.print_document, "Ctrl+P", icon="printer")
         for a in (self.act_open, self.act_save, self.act_save_as, self.act_print):
             bar.addAction(a)
 
         bar.addSeparator()
-        self.act_undo = self._act("↶ " + t("edit.undo"), self.undo, "Ctrl+Z", icon="↩️")
-        self.act_redo = self._act("↷ " + t("edit.redo"), self.redo, "Ctrl+Y", icon="↪️")
+        self.act_undo = self._act("↶ " + t("edit.undo"), self.undo, "Ctrl+Z", icon="undo-2")
+        self.act_redo = self._act("↷ " + t("edit.redo"), self.redo, "Ctrl+Y", icon="redo-2")
         bar.addAction(self.act_undo)
         bar.addAction(self.act_redo)
 
         bar.addSeparator()
         self.act_prev = self._act(t("tb.prev"), lambda: self.goto_page(self.viewer.index - 1),
-                                  "PgUp", icon="◀️")
+                                  "PgUp", icon="chevron-left")
         self.act_next = self._act(t("tb.next"), lambda: self.goto_page(self.viewer.index + 1),
-                                  "PgDown", icon="▶️")
+                                  "PgDown", icon="chevron-right")
         bar.addAction(self.act_prev)
         bar.addAction(self.act_next)
 
@@ -933,11 +934,16 @@ class MainWindow(QMainWindow):
         bar.addSeparator()
         bar.addAction(self._act(t("tb.zoom_out"),
                                 lambda: self.viewer.set_zoom(self.viewer.zoom / 1.25),
-                                "Ctrl+-", icon="➖"))
+                                "Ctrl+-", icon="zoom-out"))
         bar.addAction(self._act(t("tb.zoom_in"),
                                 lambda: self.viewer.set_zoom(self.viewer.zoom * 1.25),
-                                "Ctrl+=", icon="➕"))
-        bar.addAction(self._act(t("tb.fit_width"), self.viewer.fit_width, icon="↔️"))
+                                "Ctrl+=", icon="zoom-in"))
+        bar.addAction(self._act(t("tb.fit_width"), self.viewer.fit_width, icon="move-horizontal"))
+        self.act_fit_page = self._act(t("tb.fit_page"), self.viewer.fit_page, "Ctrl+0", icon="rectangle-vertical")
+        bar.addAction(self.act_fit_page)
+        self.act_fullscreen = self._act(t("tb.fullscreen"), self.toggle_fullscreen, "F11",
+                                        icon="minimize" if self.isFullScreen() else "maximize")
+        bar.addAction(self.act_fullscreen)
 
         bar.addSeparator()
         previous_search = getattr(self, "search_box", None)
@@ -946,19 +952,19 @@ class MainWindow(QMainWindow):
             self.search_box.setText(previous_search.text())   # เปลี่ยนภาษาแล้วคำค้นไม่หาย
         self.search_box.returnPressed.connect(self.search_next)
         bar.addWidget(self.search_box)
-        self.act_find = self._act(t("tb.find_next"), self.search_next, "F3", icon="🔎")
+        self.act_find = self._act(t("tb.find_next"), self.search_next, "F3", icon="search")
         bar.addAction(self.act_find)
-        self.act_clear_find = self._act(t("tb.clear_find"), self.clear_search, icon="🧹")
+        self.act_clear_find = self._act(t("tb.clear_find"), self.clear_search, icon="circle-x")
         bar.addAction(self.act_clear_find)
 
         bar.addSeparator()
         # รวมเครื่องมือแก้ไขทั้งหมดไว้ในปุ่มเดียว (มีเมนูย่อย) — กันปุ่มล้นแถบตอนจอไม่เต็ม
-        self.act_add_text = self._act(t("tb.add_text"), self.add_text_dialog, icon="🔤")
-        self.act_edit_text = self._act(t("tb.edit_text"), self.edit_text_dialog, icon="✏️")
-        self.act_highlight = self._act(t("tb.highlight"), self.toggle_highlight_mode, icon="🖍")
-        self.act_markup = self._act(t("tb.markup"), self.toggle_annot_mode, icon="🖊")
-        self.act_erase = self._act(t("tb.erase"), self.toggle_erase_mode, icon="🩹")
-        self.act_assistant = self._act(t("tb.assistant"), self.assistant_dialog, icon="🤖")
+        self.act_add_text = self._act(t("tb.add_text"), self.add_text_dialog, icon="type")
+        self.act_edit_text = self._act(t("tb.edit_text"), self.edit_text_dialog, icon="pencil-line")
+        self.act_highlight = self._act(t("tb.highlight"), self.toggle_highlight_mode, icon="highlighter")
+        self.act_markup = self._act(t("tb.markup"), self.toggle_annot_mode, icon="pen-tool")
+        self.act_erase = self._act(t("tb.erase"), self.toggle_erase_mode, icon="eraser")
+        self.act_assistant = self._act(t("tb.assistant"), self.assistant_dialog, icon="bot")
 
         self.tools_button = QToolButton()
         self.tools_button.setText(t("tb.tools"))
@@ -972,7 +978,7 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         # ลายเซ็น = เมนูย่อยซ้อน (คลังลายเซ็นสร้างตอนกางเมนู)
         self.sig_menu = QMenu(t("tb.signature"), self)
-        self.sig_menu.setIcon(emoji_icon("✒️"))
+        self.sig_menu.setIcon(icons.icon("signature"))
         self.sig_menu.aboutToShow.connect(self._build_signature_menu)
         tools_menu.addMenu(self.sig_menu)
         tools_menu.addSeparator()
@@ -990,7 +996,7 @@ class MainWindow(QMainWindow):
         m_file.addSeparator()
         m_file.addAction(self.act_print)
         m_file.addSeparator()
-        m_file.addAction(self._act(t("file.exit"), self.close, "Ctrl+Q", icon="🚪"))
+        m_file.addAction(self._act(t("file.exit"), self.close, "Ctrl+Q", icon="log-out"))
 
         m_edit = menu.addMenu(t("menu.edit"))
         m_edit.addAction(self.act_undo)
@@ -998,63 +1004,66 @@ class MainWindow(QMainWindow):
 
         m_page = menu.addMenu(t("menu.pages"))
         self.page_actions = [
-            self._act(t("pages.insert_blank"), self.insert_blank, icon="📄"),
-            self._act(t("pages.insert_pdf"), self.insert_pdf_file, icon="📑"),
-            self._act(t("pages.delete"), self.delete_selected, "Delete", icon="🗑"),
+            self._act(t("pages.insert_blank"), self.insert_blank, icon="file-plus"),
+            self._act(t("pages.insert_pdf"), self.insert_pdf_file, icon="file-input"),
+            self._act(t("pages.delete"), self.delete_selected, "Delete", icon="trash-2"),
             self._act(t("pages.move_up"), lambda: self.move_selected(-1), "Ctrl+Shift+Up",
-                      icon="⬆"),
+                      icon="arrow-up"),
             self._act(t("pages.move_down"), lambda: self.move_selected(1), "Ctrl+Shift+Down",
-                      icon="⬇"),
+                      icon="arrow-down"),
             # ต้องใช้อิโมจิจริง (มีสี) ไม่ใช่ตัวอักษรลูกศร ↺↻ ที่บางจนแทบมองไม่เห็นในเมนู
-            self._act(t("pages.rotate_left"), lambda: self.rotate_selected(-90), icon="🔄"),
-            self._act(t("pages.rotate_right"), lambda: self.rotate_selected(90), icon="🔃"),
-            self._act(t("pages.rotate_180"), lambda: self.rotate_selected(180), icon="↕️"),
-            self._act(t("pages.crop"), self.crop_dialog, icon="🖼"),
+            self._act(t("pages.rotate_left"), lambda: self.rotate_selected(-90), icon="rotate-ccw"),
+            self._act(t("pages.rotate_right"), lambda: self.rotate_selected(90), icon="rotate-cw"),
+            self._act(t("pages.rotate_180"), lambda: self.rotate_selected(180), icon="refresh-ccw"),
+            self._act(t("pages.crop"), self.crop_dialog, icon="crop"),
         ]
         for a in self.page_actions:
             m_page.addAction(a)
 
         m_tools = menu.addMenu(t("menu.tools"))
         self.tool_actions = [
-            self._act(t("tools.add_text"), self.add_text_dialog, icon="🔤"),
-            self._act(t("tools.edit_text"), self.edit_text_dialog, icon="✏️"),
-            self._act(t("tools.fill_form"), self.fill_form_dialog, icon="🗒"),
-            self._act(t("tools.password"), self.password_dialog, icon="🔒"),
-            self._act(t("tools.batch"), self.batch_dialog, icon="⚙️"),
-            self._act(t("tools.merge"), self.merge_dialog, icon="🔗"),
-            self._act(t("tools.split"), self.split_dialog, icon="✂️"),
-            self._act(t("tools.compress"), self.compress_dialog, icon="🗜"),
-            self._act(t("tools.page_numbers"), self.add_numbers_dialog, icon="🔢"),
-            self._act(t("tools.save_images"), self.export_images_dialog, icon="🖼"),
-            self._act(t("tools.extract_text"), self.extract_all_text, icon="📃"),
-            self._act(t("tools.ocr"), self.ocr_dialog, icon="🔍"),
-            self._act(t("tools.to_word"), self.export_word, icon="📘"),
-            self._act(t("tools.to_excel"), self.export_excel, icon="📊"),
-            self._act(t("tools.extract_images"), self.export_embedded_images, icon="🏞"),
-            self._act(t("tools.watermark_text"), self.watermark_dialog, icon="💧"),
-            self._act(t("tools.watermark_image"), self.image_watermark_dialog, icon="🌊"),
-            self._act(t("tools.signature"), self.signature_dialog, icon="✒️"),
-            self._act(t("tools.insert_image"), self.insert_image_dialog, icon="🖼"),
+            self._act(t("tools.add_text"), self.add_text_dialog, icon="type"),
+            self._act(t("tools.edit_text"), self.edit_text_dialog, icon="pencil-line"),
+            self._act(t("tools.fill_form"), self.fill_form_dialog, icon="clipboard-list"),
+            self._act(t("tools.password"), self.password_dialog, icon="lock"),
+            self._act(t("tools.batch"), self.batch_dialog, icon="layers"),
+            self._act(t("tools.merge"), self.merge_dialog, icon="merge"),
+            self._act(t("tools.split"), self.split_dialog, icon="scissors"),
+            self._act(t("tools.compress"), self.compress_dialog, icon="minimize-2"),
+            self._act(t("tools.page_numbers"), self.add_numbers_dialog, icon="list-ordered"),
+            self._act(t("tools.save_images"), self.export_images_dialog, icon="image-down"),
+            self._act(t("tools.extract_text"), self.extract_all_text, icon="file-text"),
+            self._act(t("tools.ocr"), self.ocr_dialog, icon="scan-text"),
+            self._act(t("tools.to_word"), self.export_word, icon="file-output"),
+            self._act(t("tools.to_excel"), self.export_excel, icon="sheet"),
+            self._act(t("tools.extract_images"), self.export_embedded_images, icon="images"),
+            self._act(t("tools.watermark_text"), self.watermark_dialog, icon="droplet"),
+            self._act(t("tools.watermark_image"), self.image_watermark_dialog, icon="image"),
+            self._act(t("tools.signature"), self.signature_dialog, icon="signature"),
+            self._act(t("tools.insert_image"), self.insert_image_dialog, icon="image-plus"),
         ]
         for a in self.tool_actions:
             m_tools.addAction(a)
 
         m_view = menu.addMenu(t("menu.view"))
-        toggle_text = QAction(emoji_icon("📃"), t("view.show_text"), self, checkable=True)
+        toggle_text = QAction(icons.icon("align-left"), t("view.show_text"), self, checkable=True)
         toggle_text.setChecked(self.text_panel.isVisible())
         toggle_text.toggled.connect(self._toggle_text_panel)
         m_view.addAction(toggle_text)
 
-        toggle_bm = QAction(emoji_icon("🔖"), t("view.show_bookmarks"), self, checkable=True)
+        toggle_bm = QAction(icons.icon("bookmark"), t("view.show_bookmarks"), self, checkable=True)
         toggle_bm.setChecked(self._bookmark_panel.isVisible())
         toggle_bm.toggled.connect(self._toggle_bookmark_panel)
         m_view.addAction(toggle_bm)
-        toggle_tools = QAction(emoji_icon("🧰"), t("view.show_tools"), self, checkable=True)
+        m_view.addAction(self.act_fit_page)
+        m_view.addAction(self.act_fullscreen)
+        m_view.addSeparator()
+        toggle_tools = QAction(icons.icon("panel-left"), t("view.show_tools"), self, checkable=True)
         toggle_tools.setChecked(self.tool_panel.isVisible())
         toggle_tools.toggled.connect(self._toggle_tool_panel)
         m_view.addAction(toggle_tools)
         m_view.addAction(self._act(t("panel.find"), self.tool_panel.focus_search, "Ctrl+K",
-                                   icon="🔎"))
+                                   icon="search"))
         m_view.addSeparator()
         self._build_theme_menu(m_view)
 
@@ -1068,12 +1077,35 @@ class MainWindow(QMainWindow):
 
         m_help = menu.addMenu(t("menu.help"))
         m_help.addAction(self._act(t("upd.check_now"), lambda: self.check_updates(quiet=False),
-                                   icon="🔄"))
-        m_help.addAction(self._act(t("upd.set_server"), self.set_update_server, icon="🌐"))
+                                   icon="download"))
+        m_help.addAction(self._act(t("upd.set_server"), self.set_update_server, icon="globe"))
         m_help.addSeparator()
-        m_help.addAction(self._act(t("help.about"), self.show_about, icon="ℹ️"))
+        m_help.addAction(self._act(t("help.about"), self.show_about, icon="info"))
         self._refresh_tool_panel()
         self._refresh_home()
+
+    def toggle_fullscreen(self) -> None:
+        """ดูเต็มจอ (F11) — ซ่อนแถบเมนู/แถบเครื่องมือด้านซ้าย/แถบสถานะ เหลือแต่เอกสาร
+        แถบเครื่องมือด้านบนยังอยู่ เพื่อกดออก/เลื่อนหน้า/ซูมได้ — กด F11 หรือ Esc เพื่อออก"""
+        if self.isFullScreen():
+            self.showNormal()
+            if getattr(self, "_was_maximized", False):
+                self.showMaximized()
+            self.menuBar().show()
+            self.statusBar().show()
+            self.tool_panel.setVisible(bool(i18n.get_setting("tool_panel", True)))
+        else:
+            self._was_maximized = self.isMaximized()
+            self.menuBar().hide()
+            self.statusBar().hide()
+            self.tool_panel.hide()
+            self.showFullScreen()
+        full = self.isFullScreen()
+        self.act_fullscreen.setIcon(icons.icon("minimize" if full else "maximize"))
+        self.act_fullscreen.setText(t("tb.exit_fullscreen") if full else t("tb.fullscreen"))
+        self.act_fullscreen.setToolTip(self.act_fullscreen.text())
+        if full:
+            QTimer.singleShot(150, self.viewer.fit_page)     # จอใหญ่ขึ้น -> ย่อให้เห็นทั้งหน้า
 
     def _show_home(self, show: bool) -> None:
         """สลับระหว่างหน้าแรก (ยังไม่เปิดไฟล์) กับหน้าเอกสาร"""
@@ -1135,7 +1167,7 @@ class MainWindow(QMainWindow):
         """มุมมอง → ธีม (ตาม Windows / สว่าง / มืด) และ สีหลัก"""
         from PySide6.QtGui import QActionGroup
 
-        m_theme = parent_menu.addMenu(emoji_icon("🎨"), t("theme.menu"))
+        m_theme = parent_menu.addMenu(icons.icon("palette"), t("theme.menu"))
         modes = QActionGroup(self)
         for mode in theme.MODES:
             action = QAction(t(f"theme.mode.{mode}"), self, checkable=True)
@@ -1144,6 +1176,11 @@ class MainWindow(QMainWindow):
             modes.addAction(action)
             m_theme.addAction(action)
 
+        m_theme.addSeparator()
+        colored = QAction(t("theme.colored_icons"), self, checkable=True)
+        colored.setChecked(theme.colored_icons())
+        colored.toggled.connect(lambda on: self.change_theme(colored=on))
+        m_theme.addAction(colored)
         m_theme.addSeparator()
         m_accent = m_theme.addMenu(t("theme.accent"))
         accents = QActionGroup(self)
@@ -1164,15 +1201,15 @@ class MainWindow(QMainWindow):
         accents.addAction(custom)
         m_accent.addAction(custom)
 
-    def change_theme(self, mode: str | None = None, accent: str | None = None) -> None:
-        """เปลี่ยนธีม/สีหลัก — มีผลทันที ไม่ต้องปิดโปรแกรม และจำไว้ใช้ครั้งต่อไป"""
-        theme.save(mode=mode, accent=accent)
+    def change_theme(self, mode: str | None = None, accent: str | None = None,
+                     colored: bool | None = None) -> None:
+        """เปลี่ยนธีม/สีหลัก/ไอคอนสี — มีผลทันที ไม่ต้องปิดโปรแกรม และจำไว้ใช้ครั้งต่อไป"""
+        theme.save(mode=mode, accent=accent, colored=colored)
         theme.apply(QApplication.instance())
         self.viewer.update()
-        if accent is not None:
-            # ให้เครื่องหมายถูกบนช่องสีย้ายไปสีที่เพิ่งเลือก — สร้างเมนูใหม่หลังคลิกจบ
-            # (ลบเมนูระหว่างที่ action ของมันยังทำงานอยู่ Qt อาจพัง)
-            QTimer.singleShot(0, self._rebuild_menu)
+        # ไอคอนสีตามธีม + เครื่องหมายถูกบนช่องสี -> สร้างแถบเครื่องมือ/เมนูใหม่ หลังคลิกจบ
+        # (ลบเมนูระหว่างที่ action ของมันยังทำงานอยู่ Qt อาจพัง)
+        QTimer.singleShot(0, self._rebuild_ui)
         self.statusBar().showMessage(t("theme.changed"), 3000)
 
     def _pick_accent_color(self) -> None:
@@ -1182,16 +1219,10 @@ class MainWindow(QMainWindow):
         if color.isValid():
             self.change_theme(accent=color.name())
         # กดยกเลิกแล้ว เครื่องหมายถูกในเมนูต้องกลับไปตรงกับสีที่ใช้อยู่จริง
-        QTimer.singleShot(0, self._rebuild_menu)
+        QTimer.singleShot(0, self._rebuild_ui)
 
-    def _rebuild_menu(self) -> None:
-        self._build_menu()
-        self._update_state()
-
-    def change_language(self, code: str) -> None:
-        if code == i18n.current():
-            return
-        i18n.save_language(code)
+    def _rebuild_ui(self) -> None:
+        """สร้างแถบเครื่องมือ + เมนูใหม่ (เปลี่ยนภาษา / ธีม — ข้อความและสีไอคอนเปลี่ยน)"""
         self.removeToolBar(self._toolbar)
         self._toolbar.setParent(None)   # ตัดขาดทันที ไม่รอ deleteLater ไม่งั้นแถบเก่าค้าง
         self._toolbar.deleteLater()
@@ -1199,6 +1230,12 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._retranslate()
         self._update_state()
+
+    def change_language(self, code: str) -> None:
+        if code == i18n.current():
+            return
+        i18n.save_language(code)
+        self._rebuild_ui()
         self.statusBar().showMessage(t("lang.changed"), 4000)
 
     def _retranslate(self) -> None:
@@ -4184,6 +4221,10 @@ class MainWindow(QMainWindow):
             if event.key() in (Qt.Key_Return, Qt.Key_Enter):
                 self.commit_placement()
                 return
+        # Esc ออกจากโหมดเต็มจอ (ลำดับท้ายสุด — Esc ของโหมดแก้ไขต่างๆ มาก่อน)
+        if event.key() == Qt.Key_Escape and self.isFullScreen():
+            self.toggle_fullscreen()
+            return
         super().keyPressEvent(event)
 
     # ---------------- ลากไฟล์ PDF จาก Explorer มาปล่อย ----------------
@@ -4501,9 +4542,6 @@ def main() -> None:
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
     theme.apply(app)        # ธีม/สีหลักที่ผู้ใช้เลือกไว้ (2.0)
-    # ตั้งเป็น "ตาม Windows" แล้วผู้ใช้สลับโหมดมืด/สว่างของ Windows — เปลี่ยนตามทันที
-    app.styleHints().colorSchemeChanged.connect(
-        lambda _scheme: theme.saved_mode() == "system" and theme.apply(app))
 
     errorlog.setup_logging(APP_VERSION)
 
@@ -4547,6 +4585,10 @@ def main() -> None:
         return   # มีหน้าต่างเปิดอยู่แล้ว เด้งตัวนั้นขึ้นมาแทน
 
     window = MainWindow()
+    # ตั้งเป็น "ตาม Windows" แล้วผู้ใช้สลับโหมดมืด/สว่างของ Windows — เปลี่ยนตามทันที
+    # (ไอคอนต้องเปลี่ยนสีตามด้วย ไม่ใช่แค่พื้นหลัง จึงผ่าน change_theme)
+    app.styleHints().colorSchemeChanged.connect(
+        lambda _scheme: theme.saved_mode() == "system" and window.change_theme())
     # ดักข้อผิดพลาดที่ไม่ได้ดัก -> เขียน log + เด้งกล่องบอก + เซฟงานกู้คืนก่อน
     errorlog.install_excepthook(app, on_crash=window._autosave_tick)
     window.show()

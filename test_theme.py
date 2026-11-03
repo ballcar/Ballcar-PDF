@@ -71,7 +71,9 @@ view = next(a.menu() for a in bar_actions if a.text() == i18n.t("menu.view"))
 view_actions = view.actions()
 tm = next(a.menu() for a in view_actions if a.text() == i18n.t("theme.menu"))
 theme_actions = tm.actions()
-modes = {a.text(): a for a in theme_actions if a.isCheckable()}
+mode_names = {i18n.t(f"theme.mode.{m}") for m in theme.MODES}
+modes = {a.text(): a for a in theme_actions if a.isCheckable() and a.text() in mode_names}
+assert any(a.text() == i18n.t("theme.colored_icons") for a in theme_actions), "ต้องมีตัวเลือกไอคอนสี"
 assert set(modes) == {i18n.t(f"theme.mode.{m}") for m in theme.MODES}
 assert modes[i18n.t("theme.mode.light")].isChecked()
 modes[i18n.t("theme.mode.dark")].trigger()

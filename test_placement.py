@@ -220,7 +220,10 @@ w.viewer.overlay.setGeometry(100 + w.viewer._page_offset().x(), 110 + w.viewer._
 app.processEvents()
 
 image = w.viewer.grab().toImage()
-spot = image.pixelColor(140, 120)                 # จุดว่างในกรอบ
+# จุดว่างในกรอบ — วัดจากตำแหน่งกรอบจริง (ไม่ใช่พิกัดตายตัว ขนาดแผงข้างเปลี่ยนแล้วจุดจะเลื่อน)
+from PySide6.QtCore import QPoint
+spot_at = w.viewer.overlay.mapTo(w.viewer, QPoint(40, 15))
+spot = image.pixelColor(spot_at.x(), spot_at.y())
 assert spot.red() > 240 and spot.green() > 240 and spot.blue() > 240, \
     f"กรอบตัวอย่างต้องโปร่งใส แต่เจอสี {spot.red(), spot.green(), spot.blue()}"
 print("OK  กรอบตัวอย่างโปร่งใส เห็นเนื้อหาใต้ลายเซ็น")

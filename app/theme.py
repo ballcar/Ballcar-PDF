@@ -118,7 +118,14 @@ def saved_accent() -> str:
     return i18n.get_setting("theme_accent", DEFAULT_ACCENT) or DEFAULT_ACCENT
 
 
-def save(mode: str | None = None, accent: str | None = None) -> None:
+def colored_icons() -> bool:
+    return bool(i18n.get_setting("theme_colored_icons", True))
+
+
+def save(mode: str | None = None, accent: str | None = None,
+         colored: bool | None = None) -> None:
+    if colored is not None:
+        i18n.set_setting("theme_colored_icons", bool(colored))
     if mode in MODES:
         i18n.set_setting("theme_mode", mode)
     if accent is not None:
@@ -149,9 +156,10 @@ def stylesheet(p: Palette) -> str:
         """
     return f"""
         QToolTip {{ background:{p.surface}; color:{p.text}; border:1px solid {p.border}; padding:4px; }}
-        QMenuBar {{ background:{p.surface}; color:{p.text}; }}
+        QMenuBar {{ background:{p.surface}; color:{p.text}; font-size:13px; }}
         QMenuBar::item:selected {{ background:{hover}; border-radius:4px; }}
-        QMenu {{ background:{p.surface}; color:{p.text}; border:1px solid {p.border}; padding:4px; }}
+        QMenu {{ background:{p.surface}; color:{p.text}; border:1px solid {p.border}; padding:4px;
+                 font-size:13px; }}
         QMenu::item {{ padding:6px 24px 6px 28px; border-radius:4px; }}
         QMenu::item:selected {{ background:{p.accent}; color:{p.accent_text}; }}
         QMenu::separator {{ height:1px; background:{p.border}; margin:4px 8px; }}
@@ -183,11 +191,11 @@ def stylesheet(p: Palette) -> str:
         #toolPanel {{ background:{p.surface}; border-right:1px solid {p.border}; }}
         #toolPanelBody {{ background:transparent; }}
         #toolPanel QScrollArea {{ background:transparent; }}
-        QLabel[role="panelTitle"] {{ font-size:14px; font-weight:bold; padding:2px 2px 4px 2px; }}
-        #toolSearch {{ border:1px solid {p.border}; border-radius:6px; padding:5px 8px;
+        QLabel[role="panelTitle"] {{ font-size:16px; font-weight:bold; padding:2px 2px 4px 2px; }}
+        #toolSearch {{ border:1px solid {p.border}; border-radius:6px; padding:6px 8px; font-size:13px;
                        background:{p.surface_alt}; color:{p.text}; }}
         #toolSearch:focus {{ border:1px solid {p.accent}; }}
-        QLabel[role="toolGroup"] {{ color:{p.text_muted}; font-size:11px; font-weight:bold;
+        QLabel[role="toolGroup"] {{ color:{p.text_muted}; font-size:12px; font-weight:bold;
                                     padding:10px 4px 3px 4px; }}
         QLabel[role="toolGroup"][collapsed="true"] {{ padding:0; margin:6px 6px;
             max-height:1px; min-height:1px; background:{p.border}; }}
@@ -195,7 +203,7 @@ def stylesheet(p: Palette) -> str:
                            color:{p.text_muted}; }}
         #collapseButton:hover {{ background:{hover}; color:{p.text}; }}
         QToolButton[role="tool"] {{ text-align:left; padding:5px 8px; border:none;
-                                    border-radius:5px; color:{p.text}; }}
+                                    border-radius:5px; color:{p.text}; font-size:14px; }}
         QToolButton[role="tool"]:hover {{ background:{hover}; }}
         QToolButton[role="tool"]:pressed {{ background:{pressed}; }}
         QToolButton[role="tool"]:disabled {{ color:{p.text_muted}; }}
@@ -266,6 +274,9 @@ def swatch_icon(color: str, selected: bool, size: int = 16):
 def apply(app, palette: Palette | None = None) -> Palette:
     """ใช้ธีมกับทั้งโปรแกรม (เรียกตอนเปิด และทุกครั้งที่ผู้ใช้เปลี่ยนธีม/สี)"""
     p = palette or current_palette()
+    from . import icons
+    # ไอคอนสี (ค่าเริ่มต้น) หรือขาวดำสีเดียวกับตัวหนังสือ — ธีมมืดทำสีให้สว่างขึ้นเอง
+    icons.set_color(p.text, dark=p.dark, colored=colored_icons())
     app.setStyle("Fusion")       # Fusion เปลี่ยนสีตาม palette ได้ครบ (สไตล์ Windows ไม่ยอม)
     app.setPalette(qpalette(p))
     app.setStyleSheet(stylesheet(p))

@@ -506,6 +506,17 @@ class PageViewer(QScrollArea):
         if page_width > 0:
             self.set_zoom((self.viewport().width() - 2 * SHADOW - 24) / page_width)
 
+    def fit_page(self) -> None:
+        """ดูเต็มหน้ากระดาษ — ย่อให้เห็นหน้าปัจจุบันทั้งแผ่นในจอเดียว (ไม่ต้องเลื่อน)"""
+        if not self.doc or not self.doc.page_count:
+            return
+        rect = self.doc.doc.load_page(self.index).rect
+        if rect.width <= 0 or rect.height <= 0:
+            return
+        by_width = (self.viewport().width() - 2 * SHADOW - 24) / rect.width
+        by_height = (self.viewport().height() - 2 * SHADOW - GAP) / rect.height
+        self.set_zoom(min(by_width, by_height))
+
     def refresh(self) -> None:
         """เรียกหลังแก้เอกสาร — คำนวณ layout ใหม่ + ล้างแคชภาพ + วาดใหม่"""
         if self.doc and self.doc.page_count:
