@@ -22,12 +22,14 @@ from PySide6.QtWidgets import (
 
 if __package__ in (None, ""):  # รันตรงๆ ด้วย python app/main.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from app import assistant, autosave, batch, errorlog, i18n, library, pdfops, theme, updater
+    from app import (assistant, autosave, batch, errorlog, i18n, library, pdfops, theme,
+                     toolpanel, updater)
     from app.i18n import t
     from app.pdfops import PdfDocument, merge_files, parse_page_ranges
     from app.viewer import PageViewer, pixmap_to_qimage
 else:
-    from . import assistant, autosave, batch, errorlog, i18n, library, pdfops, theme, updater
+    from . import (assistant, autosave, batch, errorlog, i18n, library, pdfops, theme, toolpanel,
+                   updater)
     from .i18n import t
     from .pdfops import PdfDocument, merge_files, parse_page_ranges
     from .viewer import PageViewer, pixmap_to_qimage
@@ -763,10 +765,10 @@ class MainWindow(QMainWindow):
         # ใช้ความกว้างขั้นต่ำ ไม่ล็อกความกว้างสูงสุด — ไม่งั้นลากเส้นแบ่งขยายไม่ได้
         left.setMinimumWidth(90)
 
+        self._thumb_panel = left
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(6)          # เส้นแบ่งหนาพอให้จับลากได้ง่าย
         splitter.setChildrenCollapsible(False)   # ลากจนหายทั้งแผงไม่ได้ (กันงง)
-        splitter.addWidget(left)
         splitter.addWidget(self._bookmark_panel)
 
         viewer_area = QWidget()
@@ -782,14 +784,31 @@ class MainWindow(QMainWindow):
         viewer_layout.addWidget(self.viewer)
         self._build_selection_popup()
         splitter.addWidget(viewer_area)
+        self._viewer_area = viewer_area
 
         splitter.addWidget(self.text_panel)
-        # ให้พื้นที่ที่เหลือไปที่หน้าเอกสาร (index 2 คือ viewer — เดิมใส่ผิดเป็น 1)
-        for i, stretch in ((0, 0), (1, 0), (2, 1), (3, 0)):
-            splitter.setStretchFactor(i, stretch)
-        splitter.setSizes([190, 0, 900, 0])   # ความกว้างเริ่มต้น (ลากปรับได้ทีหลัง)
+        # 2.0: ภาพย่อหน้าอยู่ขวาสุด (ซ้ายเป็นแถบเครื่องมือแล้ว) — แสดงเฉพาะไฟล์หลายหน้า
+        splitter.addWidget(left)
+        # ลำดับแผง: ห้ามอ้างด้วยเลขตำแหน่ง ใช้ splitter.indexOf(แผง) เสมอ (ย้ายแผงแล้วไม่พัง)
         self._splitter = splitter
-        self.setCentralWidget(splitter)
+        for panel in (self._bookmark_panel, viewer_area, self.text_panel, left):
+            splitter.setStretchFactor(splitter.indexOf(panel), 1 if panel is viewer_area else 0)
+        self._set_panel_sizes({left: 190, viewer_area: 900})   # ความกว้างเริ่มต้น
+        left.hide()            # ยังไม่เปิดไฟล์ — ไม่ต้องมีแผงภาพย่อ
+
+        # 2.0: แถบเครื่องมือด้านซ้ายสุด (นอก splitter — ตำแหน่งแผงใน splitter ใช้อ้างอิงด้วย index)
+        self.tool_panel = toolpanel.ToolPanel()
+        self.tool_panel.setVisible(bool(i18n.get_setting("tool_panel", True)))
+        self.tool_panel.set_collapsed(bool(i18n.get_setting("tool_panel_collapsed", False)))
+        self.tool_panel.on_collapse_changed = (
+            lambda collapsed: i18n.set_setting("tool_panel_collapsed", bool(collapsed)))
+        central = QWidget()
+        central_layout = QHBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.tool_panel)
+        central_layout.addWidget(splitter, 1)
+        self.setCentralWidget(central)
 
         # ลากเส้นแบ่งแล้วสร้างภาพย่อใหม่ให้พอดีความกว้าง (หน่วงไว้ ไม่ให้หนักตอนลาก)
         self._thumb_resize_timer = QTimer(self)
@@ -1024,6 +1043,12 @@ class MainWindow(QMainWindow):
         toggle_bm.setChecked(self._bookmark_panel.isVisible())
         toggle_bm.toggled.connect(self._toggle_bookmark_panel)
         m_view.addAction(toggle_bm)
+        toggle_tools = QAction(emoji_icon("🧰"), t("view.show_tools"), self, checkable=True)
+        toggle_tools.setChecked(self.tool_panel.isVisible())
+        toggle_tools.toggled.connect(self._toggle_tool_panel)
+        m_view.addAction(toggle_tools)
+        m_view.addAction(self._act(t("panel.find"), self.tool_panel.focus_search, "Ctrl+K",
+                                   icon="🔎"))
         m_view.addSeparator()
         self._build_theme_menu(m_view)
 
@@ -1041,10 +1066,46 @@ class MainWindow(QMainWindow):
         m_help.addAction(self._act(t("upd.set_server"), self.set_update_server, icon="🌐"))
         m_help.addSeparator()
         m_help.addAction(self._act(t("help.about"), self.show_about, icon="ℹ️"))
+        self._refresh_tool_panel()
+
+    def _refresh_tool_panel(self) -> None:
+        """จัดเครื่องมือลงแถบด้านซ้ายตามหมวด — ใช้ QAction ตัวเดียวกับเมนู/แถบเครื่องมือ
+
+        หา action จากชื่อที่แสดง (ไม่อิงลำดับในเมนู) ย้ายลำดับเมนูแล้วแถบนี้ไม่พัง
+        """
+        actions = {a.text(): a for a in (*self.page_actions, *self.tool_actions)}
+
+        def pick(*keys):
+            return [actions.get(t(k)) for k in keys]
+
+        groups = [
+            (t("group.edit"), [self.act_add_text, self.act_edit_text, self.act_highlight,
+                               self.act_markup, self.act_erase,
+                               *pick("tools.signature", "tools.insert_image", "tools.fill_form",
+                                     "tools.watermark_text", "tools.watermark_image")]),
+            (t("group.pages"), pick("pages.insert_blank", "pages.insert_pdf", "pages.delete",
+                                    "pages.move_up", "pages.move_down", "pages.rotate_left",
+                                    "pages.rotate_right", "pages.rotate_180", "pages.crop",
+                                    "tools.page_numbers")),
+            (t("group.files"), pick("tools.merge", "tools.split", "tools.compress",
+                                    "tools.batch")),
+            (t("group.convert"), pick("tools.to_word", "tools.to_excel", "tools.ocr",
+                                      "tools.save_images", "tools.extract_text",
+                                      "tools.extract_images")),
+            (t("group.security"), pick("tools.password")),
+            (t("group.assistant"), [self.act_assistant]),
+        ]
+        self.tool_panel.set_texts(t("panel.title"), t("panel.search"), t("panel.empty"),
+                                  t("panel.collapse"), t("panel.expand"))
+        self.tool_panel.set_groups(groups)
+
+    def _toggle_tool_panel(self, visible: bool) -> None:
+        self.tool_panel.setVisible(visible)
+        i18n.set_setting("tool_panel", bool(visible))
 
     def _build_theme_menu(self, parent_menu) -> None:
         """มุมมอง → ธีม (ตาม Windows / สว่าง / มืด) และ สีหลัก"""
-        from PySide6.QtGui import QActionGroup, QPixmap
+        from PySide6.QtGui import QActionGroup
 
         m_theme = parent_menu.addMenu(emoji_icon("🎨"), t("theme.menu"))
         modes = QActionGroup(self)
@@ -1060,15 +1121,16 @@ class MainWindow(QMainWindow):
         accents = QActionGroup(self)
         current = theme.saved_accent()
         for key, color in theme.ACCENTS.items():
-            dot = QPixmap(14, 14)
-            dot.fill(QColor(color))
-            action = QAction(QIcon(dot), t(f"theme.accent.{key}"), self, checkable=True)
+            action = QAction(theme.swatch_icon(color, current == key),
+                             t(f"theme.accent.{key}"), self, checkable=True)
             action.setChecked(current == key)
             action.triggered.connect(lambda _=False, k=key: self.change_theme(accent=k))
             accents.addAction(action)
             m_accent.addAction(action)
         m_accent.addSeparator()
-        custom = QAction(t("theme.accent.custom"), self, checkable=True)
+        custom = QAction(theme.swatch_icon(theme.resolve_accent(current), True)
+                         if current not in theme.ACCENTS else QIcon(),
+                         t("theme.accent.custom"), self, checkable=True)
         custom.setChecked(current not in theme.ACCENTS)
         custom.triggered.connect(self._pick_accent_color)
         accents.addAction(custom)
@@ -1079,6 +1141,10 @@ class MainWindow(QMainWindow):
         theme.save(mode=mode, accent=accent)
         theme.apply(QApplication.instance())
         self.viewer.update()
+        if accent is not None:
+            # ให้เครื่องหมายถูกบนช่องสีย้ายไปสีที่เพิ่งเลือก — สร้างเมนูใหม่หลังคลิกจบ
+            # (ลบเมนูระหว่างที่ action ของมันยังทำงานอยู่ Qt อาจพัง)
+            QTimer.singleShot(0, self._rebuild_menu)
         self.statusBar().showMessage(t("theme.changed"), 3000)
 
     def _pick_accent_color(self) -> None:
@@ -1088,6 +1154,9 @@ class MainWindow(QMainWindow):
         if color.isValid():
             self.change_theme(accent=color.name())
         # กดยกเลิกแล้ว เครื่องหมายถูกในเมนูต้องกลับไปตรงกับสีที่ใช้อยู่จริง
+        QTimer.singleShot(0, self._rebuild_menu)
+
+    def _rebuild_menu(self) -> None:
         self._build_menu()
         self._update_state()
 
@@ -1377,6 +1446,7 @@ class MainWindow(QMainWindow):
         # รีเฟรชวิวเออร์ก่อน — เพราะ _rebuild_thumbs จะเลือกแถวแล้วเรียก show_page() กลับเข้ามา
         # ถ้าวิวเออร์ยังคำนวณหน้าไม่เสร็จ (เช่นเพิ่งแทรก/ลบหน้า) จะเลื่อนไปตำแหน่งผิด
         self.viewer.refresh()
+        self._update_thumb_panel()
         self._rebuild_thumbs(keep_row)
         self._update_text_panel()
         if self._bookmark_panel.isVisible():
@@ -1571,18 +1641,36 @@ class MainWindow(QMainWindow):
         vbar = self.viewer.verticalScrollBar()
         vbar.setValue(vbar.maximum() if to_bottom else vbar.minimum())
 
-    def _give_panel_width(self, index: int, width: int) -> None:
+    def _set_panel_sizes(self, widths: dict) -> None:
+        """ตั้งความกว้างแผงใน splitter ตามตัวแผง (แผงที่ไม่ระบุ = 0)"""
+        sizes = [0] * self._splitter.count()
+        for panel, width in widths.items():
+            sizes[self._splitter.indexOf(panel)] = width
+        self._splitter.setSizes(sizes)
+
+    def _give_panel_width(self, panel, width: int) -> None:
         """เปิดแผงข้างแล้วให้ความกว้างเริ่มต้น (ลากปรับได้ทีหลัง)"""
         sizes = self._splitter.sizes()
-        if index < len(sizes) and sizes[index] < 20:
+        index = self._splitter.indexOf(panel)
+        viewer = self._splitter.indexOf(self._viewer_area)
+        if index >= 0 and sizes[index] < 20:
             sizes[index] = width
-            sizes[2] = max(200, sizes[2] - width)    # เอาพื้นที่จากหน้าเอกสาร
+            sizes[viewer] = max(200, sizes[viewer] - width)    # เอาพื้นที่จากหน้าเอกสาร
             self._splitter.setSizes(sizes)
+
+    def _update_thumb_panel(self) -> None:
+        """แผงภาพย่อแสดงเฉพาะไฟล์ที่มีมากกว่า 1 หน้า (หน้าเดียวไม่มีอะไรให้เลือก/สลับ)"""
+        want = bool(self.doc and self.doc.page_count > 1)
+        if want == self._thumb_panel.isVisible():
+            return
+        self._thumb_panel.setVisible(want)
+        if want:
+            self._give_panel_width(self._thumb_panel, 190)
 
     def _toggle_text_panel(self, on: bool) -> None:
         self.text_panel.setVisible(on)
         if on:
-            self._give_panel_width(3, 320)
+            self._give_panel_width(self.text_panel, 320)
         self._update_text_panel()
 
     def _update_text_panel(self) -> None:
@@ -3381,7 +3469,7 @@ class MainWindow(QMainWindow):
     def _toggle_bookmark_panel(self, on: bool) -> None:
         self._bookmark_panel.setVisible(on)
         if on:
-            self._give_panel_width(1, 240)
+            self._give_panel_width(self._bookmark_panel, 240)
             self._refresh_bookmarks()
 
     def _refresh_bookmarks(self) -> None:

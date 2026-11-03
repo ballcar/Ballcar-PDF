@@ -180,6 +180,25 @@ def stylesheet(p: Palette) -> str:
                     border:1px solid {p.border}; border-radius:6px; }}
         #selPopup QPushButton {{ color:#f0f0f0; background:transparent; border:none; padding:4px 10px; }}
         #selPopup QPushButton:hover {{ background:{p.accent}; color:{p.accent_text}; border-radius:4px; }}
+        #toolPanel {{ background:{p.surface}; border-right:1px solid {p.border}; }}
+        #toolPanelBody {{ background:transparent; }}
+        #toolPanel QScrollArea {{ background:transparent; }}
+        QLabel[role="panelTitle"] {{ font-size:14px; font-weight:bold; padding:2px 2px 4px 2px; }}
+        #toolSearch {{ border:1px solid {p.border}; border-radius:6px; padding:5px 8px;
+                       background:{p.surface_alt}; color:{p.text}; }}
+        #toolSearch:focus {{ border:1px solid {p.accent}; }}
+        QLabel[role="toolGroup"] {{ color:{p.text_muted}; font-size:11px; font-weight:bold;
+                                    padding:10px 4px 3px 4px; }}
+        QLabel[role="toolGroup"][collapsed="true"] {{ padding:0; margin:6px 6px;
+            max-height:1px; min-height:1px; background:{p.border}; }}
+        #collapseButton {{ font-size:15px; font-weight:bold; padding:0 6px; border-radius:5px;
+                           color:{p.text_muted}; }}
+        #collapseButton:hover {{ background:{hover}; color:{p.text}; }}
+        QToolButton[role="tool"] {{ text-align:left; padding:5px 8px; border:none;
+                                    border-radius:5px; color:{p.text}; }}
+        QToolButton[role="tool"]:hover {{ background:{hover}; }}
+        QToolButton[role="tool"]:pressed {{ background:{pressed}; }}
+        QToolButton[role="tool"]:disabled {{ color:{p.text_muted}; }}
         QListWidget::item:selected, QTreeWidget::item:selected {{
             background:{_mix(p.surface, p.accent, 0.35)}; color:{p.text}; }}
         {bars}
@@ -205,6 +224,31 @@ def qpalette(p: Palette):
     for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
         pal.setColor(QPalette.Disabled, role, QColor(p.text_muted))
     return pal
+
+
+def swatch_icon(color: str, selected: bool, size: int = 16):
+    """ไอคอนช่องสีในเมนูสีหลัก — สีที่เลือกอยู่มีเครื่องหมายถูกบนช่องสี
+
+    (Qt ไม่แสดงเครื่องหมายถูกของเมนูที่มีไอคอน ผู้ใช้เลยไม่รู้ว่าเลือกสีไหนอยู่)
+    """
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(color))
+    painter.drawRoundedRect(1, 1, size - 2, size - 2, 3, 3)
+    if selected:
+        pen = QPen(QColor(_readable_on(color)), 2.2)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawPolyline([QPointF(size * 0.25, size * 0.52), QPointF(size * 0.43, size * 0.7),
+                              QPointF(size * 0.76, size * 0.32)])
+    painter.end()
+    return QIcon(pix)
 
 
 def apply(app, palette: Palette | None = None) -> Palette:

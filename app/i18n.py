@@ -320,6 +320,21 @@ TEXTS: dict[str, dict[str, str]] = {
         "theme.accent.custom": "เลือกสีเอง…",
         "theme.changed": "เปลี่ยนธีมแล้ว",
 
+        # แถบเครื่องมือด้านซ้าย (2.0)
+        "panel.title": "เครื่องมือทั้งหมด",
+        "panel.search": "ค้นหาเครื่องมือ… (Ctrl+K)",
+        "panel.empty": "ไม่พบเครื่องมือที่ตรงกับคำค้น",
+        "panel.find": "ค้นหาเครื่องมือ",
+        "panel.collapse": "ยุบแถบเครื่องมือ (เหลือแต่ไอคอน)",
+        "panel.expand": "ขยายแถบเครื่องมือ",
+        "view.show_tools": "แสดงแถบเครื่องมือด้านซ้าย",
+        "group.edit": "แก้ไขเนื้อหา",
+        "group.pages": "จัดการหน้า",
+        "group.files": "รวม / แยก / บีบอัด",
+        "group.convert": "แปลงไฟล์",
+        "group.security": "ความปลอดภัย",
+        "group.assistant": "ผู้ช่วย",
+
         # แปลงเป็น Word + OCR หน้าสแกน
         "word.ocr_progress": "กำลังอ่านข้อความจากหน้าสแกน {done}/{total}…",
         "word.ocr_title": "แปลงเป็น Word แล้ว",
@@ -786,6 +801,21 @@ TEXTS: dict[str, dict[str, str]] = {
         "theme.accent.teal": "Teal",
         "theme.accent.custom": "Custom colour…",
         "theme.changed": "Theme changed",
+
+        # Left tool panel (2.0)
+        "panel.title": "All tools",
+        "panel.search": "Find a tool… (Ctrl+K)",
+        "panel.empty": "No tool matches your search",
+        "panel.find": "Find a tool",
+        "panel.collapse": "Collapse tool panel (icons only)",
+        "panel.expand": "Expand tool panel",
+        "view.show_tools": "Show left tool panel",
+        "group.edit": "Edit content",
+        "group.pages": "Pages",
+        "group.files": "Combine / Split / Compress",
+        "group.convert": "Convert",
+        "group.security": "Security",
+        "group.assistant": "Assistant",
 
         # Convert to Word + OCR scanned pages
         "word.ocr_progress": "Reading text from scanned page {done}/{total}…",
