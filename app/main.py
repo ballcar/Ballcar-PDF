@@ -16,20 +16,20 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QToolButton,
-    QPushButton, QSplitter, QStatusBar, QToolBar, QTreeWidget, QTreeWidgetItem,
+    QPushButton, QSplitter, QStackedWidget, QStatusBar, QToolBar, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
 )
 
 if __package__ in (None, ""):  # รันตรงๆ ด้วย python app/main.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from app import (assistant, autosave, batch, errorlog, i18n, library, pdfops, theme,
-                     toolpanel, updater)
+    from app import (assistant, autosave, batch, errorlog, homepage, i18n, library, pdfops,
+                     recent, theme, toolpanel, updater)
     from app.i18n import t
     from app.pdfops import PdfDocument, merge_files, parse_page_ranges
     from app.viewer import PageViewer, pixmap_to_qimage
 else:
-    from . import (assistant, autosave, batch, errorlog, i18n, library, pdfops, theme, toolpanel,
-                   updater)
+    from . import (assistant, autosave, batch, errorlog, homepage, i18n, library, pdfops, recent,
+                   theme, toolpanel, updater)
     from .i18n import t
     from .pdfops import PdfDocument, merge_files, parse_page_ranges
     from .viewer import PageViewer, pixmap_to_qimage
@@ -781,7 +781,13 @@ class MainWindow(QMainWindow):
         viewer_layout.addWidget(self._highlight_bar)
         viewer_layout.addWidget(self._erase_bar)
         viewer_layout.addWidget(self._annot_bar)
-        viewer_layout.addWidget(self.viewer)
+        # 2.0: ยังไม่เปิดไฟล์ -> แสดงหน้าแรก (งานหลัก + ไฟล์ล่าสุด) แทนพื้นที่เอกสารว่างๆ
+        self._doc_stack = QStackedWidget()
+        self.home = homepage.HomePage()
+        self.home.open_requested.connect(self._open_path)
+        self._doc_stack.addWidget(self.home)
+        self._doc_stack.addWidget(self.viewer)
+        viewer_layout.addWidget(self._doc_stack)
         self._build_selection_popup()
         splitter.addWidget(viewer_area)
         self._viewer_area = viewer_area
@@ -1067,6 +1073,28 @@ class MainWindow(QMainWindow):
         m_help.addSeparator()
         m_help.addAction(self._act(t("help.about"), self.show_about, icon="ℹ️"))
         self._refresh_tool_panel()
+        self._refresh_home()
+
+    def _show_home(self, show: bool) -> None:
+        """สลับระหว่างหน้าแรก (ยังไม่เปิดไฟล์) กับหน้าเอกสาร"""
+        target = self.home if show else self.viewer
+        if self._doc_stack.currentWidget() is not target:
+            self._doc_stack.setCurrentWidget(target)
+            if show:
+                self.home.refresh()      # รายการไฟล์ล่าสุดอาจเปลี่ยนไปแล้ว
+
+    def _refresh_home(self) -> None:
+        """ข้อความ/ปุ่มงานหลักของหน้าแรก (สร้างใหม่ตอนเปลี่ยนภาษา)"""
+        actions = {a.text(): a for a in self.tool_actions}
+        self.home.set_texts(title=t("home.title"), subtitle=t("home.subtitle"),
+                            recent=t("home.recent"), clear=t("home.clear"),
+                            empty=t("home.empty"), remove=t("home.remove"),
+                            folder=t("home.folder"))
+        self.home.set_actions([
+            (self.act_open, t("home.open"), t("home.open_detail")),
+            (actions[t("tools.merge")], t("home.merge"), t("home.merge_detail")),
+            (actions[t("tools.batch")], t("home.batch"), t("home.batch_detail")),
+        ])
 
     def _refresh_tool_panel(self) -> None:
         """จัดเครื่องมือลงแถบด้านซ้ายตามหมวด — ใช้ QAction ตัวเดียวกับเมนู/แถบเครื่องมือ
@@ -1387,6 +1415,11 @@ class MainWindow(QMainWindow):
                   self.act_next, self.act_find, self.act_clear_find,
                   *self.page_actions, *self.tool_actions):
             a.setEnabled(has)
+        # รวมไฟล์ / Batch ทำกับไฟล์บนดิสก์ ไม่ต้องเปิดไฟล์ก่อน
+        for a in self.tool_actions:
+            if a.text() in (t("tools.merge"), t("tools.batch")):
+                a.setEnabled(True)
+        self._show_home(self.doc is None)
 
         self.act_undo.setEnabled(bool(self.doc and self.doc.can_undo))
         self.act_redo.setEnabled(bool(self.doc and self.doc.can_redo))
@@ -2720,6 +2753,8 @@ class MainWindow(QMainWindow):
         self.viewer.set_document(new_doc)
         self._refresh_all(keep_row=0)
         self.viewer.fit_width()
+        if new_doc.path:
+            recent.add(new_doc.path)
         # ไฟล์เสียแล้วโปรแกรมซ่อมให้ — บอกผู้ใช้ว่าต้องกดบันทึกเพื่อเก็บผลการซ่อม
         if getattr(new_doc, "repaired_on_open", False):
             QMessageBox.information(

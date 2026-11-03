@@ -199,6 +199,18 @@ def stylesheet(p: Palette) -> str:
         QToolButton[role="tool"]:hover {{ background:{hover}; }}
         QToolButton[role="tool"]:pressed {{ background:{pressed}; }}
         QToolButton[role="tool"]:disabled {{ color:{p.text_muted}; }}
+        #homePage {{ background:{p.window}; }}
+        QLabel[role="homeTitle"] {{ font-size:26px; font-weight:bold; color:{p.text}; }}
+        QPushButton[role="card"] {{ background:{p.surface}; color:{p.text}; text-align:left;
+            border:1px solid {p.border}; border-radius:8px; padding:10px 14px; }}
+        QPushButton[role="card"]:hover {{ border-color:{p.accent}; background:{hover}; }}
+        QPushButton[role="card"]:pressed {{ background:{pressed}; }}
+        #recentList {{ background:{p.surface}; border:1px solid {p.border}; border-radius:8px;
+                       padding:4px; color:{p.text}; }}
+        #recentList::item {{ padding:6px 8px; border-radius:6px; }}
+        #recentList::item:hover {{ background:{hover}; }}
+        #linkButton {{ color:{p.accent}; border:none; }}
+        #linkButton:hover {{ text-decoration:underline; }}
         QListWidget::item:selected, QTreeWidget::item:selected {{
             background:{_mix(p.surface, p.accent, 0.35)}; color:{p.text}; }}
         {bars}

@@ -335,6 +335,21 @@ TEXTS: dict[str, dict[str, str]] = {
         "group.security": "ความปลอดภัย",
         "group.assistant": "ผู้ช่วย",
 
+        # หน้าแรก (2.0)
+        "home.title": "Ballcar PDF",
+        "home.subtitle": "เปิดไฟล์ หรือลากไฟล์ PDF มาวางที่หน้าต่างนี้ได้เลย",
+        "home.open": "เปิดไฟล์ PDF",
+        "home.merge": "รวมไฟล์ PDF",
+        "home.batch": "ประมวลผลหลายไฟล์",
+        "home.open_detail": "เปิดไฟล์ PDF ในเครื่อง (Ctrl+O)",
+        "home.merge_detail": "รวมหลายไฟล์เป็นไฟล์เดียว",
+        "home.batch_detail": "ทำงานเดียวกันกับหลายไฟล์",
+        "home.recent": "เปิดล่าสุด",
+        "home.clear": "ล้างรายการ",
+        "home.empty": "ยังไม่มีไฟล์ที่เปิดล่าสุด — ไฟล์ที่เปิดแล้วจะขึ้นที่นี่",
+        "home.remove": "เอาออกจากรายการ",
+        "home.folder": "เปิดโฟลเดอร์ที่เก็บไฟล์",
+
         # แปลงเป็น Word + OCR หน้าสแกน
         "word.ocr_progress": "กำลังอ่านข้อความจากหน้าสแกน {done}/{total}…",
         "word.ocr_title": "แปลงเป็น Word แล้ว",
@@ -816,6 +831,21 @@ TEXTS: dict[str, dict[str, str]] = {
         "group.convert": "Convert",
         "group.security": "Security",
         "group.assistant": "Assistant",
+
+        # Home page (2.0)
+        "home.title": "Ballcar PDF",
+        "home.subtitle": "Open a file, or drag a PDF onto this window",
+        "home.open": "Open PDF",
+        "home.merge": "Combine PDFs",
+        "home.batch": "Batch process",
+        "home.open_detail": "Open a PDF on this computer (Ctrl+O)",
+        "home.merge_detail": "Combine several files into one",
+        "home.batch_detail": "Run one task on many files",
+        "home.recent": "Recent",
+        "home.clear": "Clear list",
+        "home.empty": "No recent files yet — files you open will appear here",
+        "home.remove": "Remove from list",
+        "home.folder": "Open containing folder",
 
         # Convert to Word + OCR scanned pages
         "word.ocr_progress": "Reading text from scanned page {done}/{total}…",
