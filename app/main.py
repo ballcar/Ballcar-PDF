@@ -815,6 +815,23 @@ class MainWindow(QMainWindow):
         self.tab_bar.tabMoved.connect(self._on_tab_moved)
         self.tab_bar.hide()
         viewer_layout.addWidget(self.tab_bar)
+        # 2.3: แถบเตือนไฟล์ที่มีสคริปต์ / คำสั่งเปิดโปรแกรม / ไฟล์แนบ
+        self._risk_bar = QWidget()
+        risk_layout = QHBoxLayout(self._risk_bar)
+        risk_layout.setContentsMargins(8, 4, 8, 4)
+        self._risk_label = QLabel()
+        self._risk_label.setWordWrap(True)
+        risk_layout.addWidget(self._risk_label, 1)
+        self._risk_clean = QPushButton()
+        self._risk_clean.clicked.connect(self.remove_risks)
+        self._risk_close = QPushButton("×")
+        self._risk_close.setFixedWidth(30)
+        self._risk_close.clicked.connect(self._dismiss_risk_bar)
+        risk_layout.addWidget(self._risk_clean)
+        risk_layout.addWidget(self._risk_close)
+        style_action_bar(self._risk_bar, "riskBar", "warn")
+        self._risk_bar.hide()
+        viewer_layout.addWidget(self._risk_bar)
         viewer_layout.addWidget(self._placing_bar)
         viewer_layout.addWidget(self._stamp_bar)
         viewer_layout.addWidget(self._text_bar)
@@ -1135,7 +1152,10 @@ class MainWindow(QMainWindow):
             self._act(t("tools.password"), self.password_dialog, icon="lock"),
             self._act(t("tools.cover_text"), self.cover_text_dialog, icon="eraser"),
             self._act(t("stamp.menu"), self.stamp_dialog, icon="signature"),
+            self._act(t("sig.draw_menu"), self.draw_signature, icon="pen-tool"),
+            self._act(t("sig.crop_menu"), self.capture_signature_mode, icon="crop"),
             self._act(t("cmpdoc.menu"), self.compare_dialog, icon="layers"),
+            self._act(t("risk.menu"), self.remove_risks, icon="lock"),
             self._act(t("tools.batch"), self.batch_dialog, icon="layers"),
             self._act(t("tools.merge"), self.merge_dialog, icon="merge"),
             self._act(t("tools.split"), self.split_dialog, icon="scissors"),
@@ -1226,6 +1246,57 @@ class MainWindow(QMainWindow):
         self.act_fullscreen.setToolTip(self.act_fullscreen.text())
         if full:
             QTimer.singleShot(150, self.viewer.fit_page)     # จอใหญ่ขึ้น -> ย่อให้เห็นทั้งหน้า
+
+    # ---------------- สคริปต์ / ไฟล์แนบในไฟล์ PDF (2.3 ความปลอดภัย) ----------------
+
+    def _update_risk_bar(self) -> None:
+        doc = self.doc
+        if doc is None or not doc.page_count:
+            self._risk_bar.hide()
+            return
+        if getattr(doc, "risk_info", None) is None:
+            try:
+                doc.risk_info = doc.risks()
+            except Exception:
+                doc.risk_info = {}
+        info = doc.risk_info
+        if not any(info.values()) or getattr(doc, "risk_dismissed", False):
+            self._risk_bar.hide()
+            return
+        parts = []
+        if info.get("javascript"):
+            parts.append(t("risk.js", n=info["javascript"]))
+        if info.get("launch"):
+            parts.append(t("risk.launch", n=info["launch"]))
+        if info.get("attachments"):
+            parts.append(t("risk.attach", n=info["attachments"]))
+        self._risk_label.setText("⚠ " + t("risk.bar", what=" · ".join(parts)))
+        self._risk_clean.setText(t("risk.clean"))
+        self._risk_close.setToolTip(t("risk.dismiss"))
+        self._risk_bar.show()
+
+    def _dismiss_risk_bar(self) -> None:
+        if self.doc is not None:
+            self.doc.risk_dismissed = True
+        self._risk_bar.hide()
+
+    def remove_risks(self) -> None:
+        """ลบ JavaScript / คำสั่งเปิดโปรแกรม / ไฟล์แนบ ออกจากไฟล์ (ย้อนกลับได้ก่อนบันทึก)"""
+        if not self.doc or not self.doc.page_count:
+            return
+        info = self.doc.risks()
+        if not any(info.values()):
+            self.doc.risk_info = info
+            self._risk_bar.hide()
+            QMessageBox.information(self, t("risk.menu"), t("risk.none"))
+            return
+        if QMessageBox.question(self, t("risk.menu"), t("risk.confirm")) != QMessageBox.Yes:
+            return
+        removed = self.doc.remove_risks()
+        self.doc.risk_info = self.doc.risks()
+        self._refresh_all(keep_row=self.viewer.index)
+        self._update_risk_bar()
+        self.statusBar().showMessage(t("risk.done", n=sum(removed.values())), 10000)
 
     # ---------------- เปรียบเทียบเอกสาร (2.3) ----------------
 
@@ -1494,7 +1565,8 @@ class MainWindow(QMainWindow):
         groups = [
             (t("group.edit"), [self.act_add_text, self.act_edit_text, self.act_highlight,
                                self.act_markup, self.act_erase, self.act_add_note,
-                               *pick("tools.signature", "stamp.menu", "tools.insert_image", "tools.fill_form",
+                               *pick("tools.signature", "sig.draw_menu", "sig.crop_menu", "stamp.menu",
+                                     "tools.insert_image", "tools.fill_form",
                                      "tools.watermark_text", "tools.watermark_image")]),
             (t("group.pages"), pick("pages.insert_blank", "pages.insert_pdf", "pages.delete",
                                     "pages.move_up", "pages.move_down", "pages.rotate_left",
@@ -1505,7 +1577,7 @@ class MainWindow(QMainWindow):
             (t("group.convert"), pick("tools.to_word", "tools.to_excel", "tools.ocr", "tools.ocr_fixes",
                                       "tools.save_images", "tools.extract_text",
                                       "tools.extract_images")),
-            (t("group.security"), pick("tools.password", "tools.cover_text")),
+            (t("group.security"), pick("tools.password", "tools.cover_text", "risk.menu")),
             (t("group.assistant"), [self.act_assistant]),
         ]
         self.tool_panel.set_texts(t("panel.title"), t("panel.search"), t("panel.empty"),
@@ -2221,6 +2293,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, lambda: self.viewer.verticalScrollBar().setValue(scroll))
         else:
             self.viewer.fit_width()     # เพิ่งเปิด
+        QTimer.singleShot(0, self._update_risk_bar)
 
     def _on_tab_moved(self, src: int, dst: int) -> None:
         self._tabs.insert(dst, self._tabs.pop(src))
@@ -2254,6 +2327,7 @@ class MainWindow(QMainWindow):
             self.tab_bar.hide()
             self.viewer.set_document(None)
             self._refresh_all()
+            self._update_risk_bar()
         return True
 
     def next_tab(self, step: int = 1) -> None:

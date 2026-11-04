@@ -19,6 +19,8 @@ NOTES = {
                                   "แดง = หายไป เขียว = เพิ่ม/แก้"),
             ("ตั้งค่ารวม", "ไฟล์ → ตั้งค่า (Ctrl+,): ธีม ภาษา ชื่อผู้เขียนโน้ต เซิร์ฟเวอร์อัปเดต"),
             ("ปักหมุดไฟล์ที่ใช้บ่อย", "หน้าแรก: คลิกขวาที่ไฟล์ → ปักหมุดไว้บนสุด"),
+            ("เตือนไฟล์ที่มีสคริปต์/ไฟล์แนบ", "เปิดไฟล์ที่มี JavaScript หรือไฟล์แนบ จะมีแถบเตือน "
+                                             "กด ล้างออก แล้วบันทึกได้ไฟล์ที่ปลอดภัยไว้ส่งต่อ"),
         ],
         "2.2": [
             ("โน้ตบนหน้า", "คลิกขวาตรงจุดที่ต้องการ → เพิ่มโน้ตตรงนี้ · ชี้เมาส์ที่ไอคอนเพื่ออ่าน · "
@@ -43,6 +45,8 @@ NOTES = {
                                   "red = removed, green = added/changed"),
             ("Settings page", "File → Settings (Ctrl+,): theme, language, note author, update server"),
             ("Pin frequent files", "Home page: right-click a file → Pin to top"),
+            ("Warning for scripts/attachments", "Files with JavaScript or attachments show a warning bar; "
+                                                "press Remove, then save a safe copy to forward"),
         ],
         "2.2": [
             ("Notes on the page", "Right-click where you want it → Add Note Here · hover the icon to read · "

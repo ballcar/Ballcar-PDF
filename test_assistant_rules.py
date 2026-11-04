@@ -180,5 +180,17 @@ d._run()
 assert d.command == "ลบหน้าสุดท้าย"
 print("OK  หน้าต่างผู้ช่วย: เห็นสิ่งที่จะทำทันที, ไม่เข้าใจเสนอคำสั่ง, กดตัวอย่างเติมให้")
 
+# ---- 2.2-2.3: ผู้ช่วยเปิดเครื่องมือใหม่ได้ (คำเฉพาะมาก่อนคำกว้างอย่าง "ลายเซ็น") ----
+import app.main as _main
+for text, method in [("ตรายางอนุมัติ", "stamp_dialog"), ("เปรียบเทียบเอกสาร", "compare_dialog"),
+                     ("วาดลายเซ็น", "draw_signature"), ("ครอปลายเซ็นจากหน้านี้", "capture_signature_mode"),
+                     ("ปิดทับคำว่า 1234", "cover_text_dialog"), ("เพิ่มโน้ต", "add_note_mode"),
+                     ("เปิดตั้งค่า", "settings_dialog"), ("ใส่ลายเซ็น", "signature_dialog"),
+                     ("ตั้งรหัสผ่าน", "password_dialog"), ("ล้างสคริปต์ในไฟล์", "remove_risks")]:
+    it = A.parse(text)
+    assert it and it.action == "open_tool" and it.params["method"] == method, (text, it)
+    assert hasattr(_main.MainWindow, method), f"MainWindow ต้องมี {method}"
+print("OK  ผู้ช่วยเปิดเครื่องมือใหม่ได้: ตรายาง เปรียบเทียบ วาด/ครอปลายเซ็น ปิดทับคำ โน้ต ตั้งค่า")
+
 print("")
 print("ผ่านทั้งหมด")

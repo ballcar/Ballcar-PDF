@@ -61,7 +61,8 @@ panel.search.setText("หมุน")
 assert len(panel.visible_buttons()) == 3
 panel.search.setText(i18n.t("group.security"))          # ค้นชื่อหมวด = ทั้งหมวด
 assert [b.action.text() for b in panel.visible_buttons()] == [i18n.t("tools.password"),
-                                                              i18n.t("tools.cover_text")]
+                                                              i18n.t("tools.cover_text"),
+                                                              i18n.t("risk.menu")]
 panel.search.setText("ไม่มีเครื่องมือนี้แน่นอน")
 assert panel.visible_buttons() == [] and not panel.empty.isHidden()
 fired = []

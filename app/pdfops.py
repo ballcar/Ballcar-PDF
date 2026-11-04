@@ -2476,6 +2476,70 @@ class PdfDocument:
         self.dirty = True
         return len(annots)
 
+    # ---------- สคริปต์ / คำสั่งเปิดโปรแกรม / ไฟล์แนบ (2.3 ความปลอดภัย) ----------
+    # Ballcar PDF ไม่รัน JavaScript ไม่ทำตามคำสั่งเปิดโปรแกรม และไม่เปิดไฟล์แนบเองอยู่แล้ว
+    # แต่ของพวกนี้ยังติดไปกับไฟล์ตอนบันทึก — ส่งต่อแล้วไปทำงานใน Acrobat/เบราว์เซอร์ของคนอื่นได้
+
+    def risks(self) -> dict:
+        """นับของที่อาจอันตราย {"javascript": n, "launch": n, "attachments": n}"""
+        doc = self.doc
+        js = launch = 0
+        for xref in range(1, doc.xref_length()):
+            try:
+                obj = doc.xref_object(xref, compressed=True)
+            except Exception:
+                continue
+            if "/JS" in obj or "/S/JavaScript" in obj or "/S /JavaScript" in obj:
+                js += 1
+            if "/S/Launch" in obj or "/S /Launch" in obj:
+                launch += 1
+        attachments = doc.embfile_count()
+        for page in doc:
+            attachments += sum(1 for _ in page.annots(types=[fitz.PDF_ANNOT_FILE_ATTACHMENT]))
+        return {"javascript": js, "launch": launch, "attachments": attachments}
+
+    def remove_risks(self) -> dict:
+        """ลบ JavaScript / คำสั่งเปิดโปรแกรม / ไฟล์แนบ ออกจากเอกสาร (ย้อนกลับได้) คืนจำนวนที่ลบ
+        เนื้อหาหน้า ลิงก์เว็บ ฟอร์ม และข้อมูลไฟล์ (metadata) ไม่แตะ"""
+        before = self.risks()
+        if not any(before.values()):
+            return before
+        self.push_undo()
+        doc = self.doc
+        # JavaScript และคำสั่งเปิดโปรแกรม (/Launch): ทั้งแบบเป็น object แยก และแบบฝังอยู่ใน
+        # /A /AA /OpenAction ของหน้า/ลิงก์/ช่องฟอร์ม/เอกสาร (scrub ของ PyMuPDF เก็บไม่ครบทุกแบบ)
+        def dangerous(text: str) -> bool:
+            return any(k in text for k in ("/JS", "/JavaScript", "/Launch"))
+
+        cat = doc.pdf_catalog()
+        if doc.xref_get_key(cat, "Names/JavaScript")[0] != "null":
+            doc.xref_set_key(cat, "Names/JavaScript", "null")     # สคริปต์ระดับเอกสาร
+        for xref in range(1, doc.xref_length()):
+            try:
+                obj = doc.xref_object(xref, compressed=True)
+            except Exception:
+                continue
+            if not dangerous(obj):
+                continue
+            if doc.xref_get_key(xref, "S")[1] in ("/JavaScript", "/Launch"):
+                doc.update_object(xref, "<<>>")                  # ตัว action เอง -> ว่าง
+                continue
+            for key in ("A", "AA", "OpenAction"):
+                kind, value = doc.xref_get_key(xref, key)
+                if kind != "null" and dangerous(value):
+                    doc.xref_set_key(xref, key, "null")
+        for page in doc:                                          # โน้ตแบบแนบไฟล์
+            for annot in list(page.annots(types=[fitz.PDF_ANNOT_FILE_ATTACHMENT])):
+                page.delete_annot(annot)
+        doc.scrub(javascript=True, embedded_files=True, attached_files=True,
+                  clean_pages=False, hidden_text=False, metadata=False, redactions=False,
+                  remove_links=False, reset_fields=False, reset_responses=False,
+                  thumbnails=False, xml_metadata=False)
+        for name in list(doc.embfile_names()):          # เผื่อ scrub เหลือรายการไฟล์แนบ
+            doc.embfile_del(name)
+        self.dirty = True
+        return before
+
     # ---------- ความคิดเห็น / โน้ต (2.2) ----------
     # โน้ตเป็น annotation มาตรฐานของ PDF (Text) — เปิดใน Acrobat/Edge ก็เห็นและตอบได้
     # แผงความคิดเห็นรวมทั้งโน้ต ไฮไลต์ ขีดเส้น และรูปวาด (ทั้งที่มากับไฟล์และที่เพิ่งวาด)
