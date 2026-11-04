@@ -260,6 +260,33 @@ def _has_thai(text: str) -> bool:
 _THAI_MARKS = set("ัิีึืฺุู็่้๊๋์ํ๎")
 
 
+# ---------- แก้คำ OCR ภาษาไทย (2.2) ----------
+# กฎที่ปลอดภัย (ไม่มีทางเป็นคำที่ถูก): สระเอสองตัว = สระแอ, นิคหิต+อา = สระอำ,
+# วรรณยุกต์/สระซ้อนซ้ำ, ตัว ฃ ฅ ที่เลิกใช้แล้ว (OCR มักอ่าน ข ค ผิดเป็นตัวนี้)
+_OCR_RULES = [("เเ", "แ"), ("ํ า", "ำ"), ("ํา", "ำ"), ("ฃ", "ข"), ("ฅ", "ค")]
+_ocr_user_fixes: list[tuple[str, str]] = []
+
+
+def set_ocr_corrections(pairs) -> None:
+    """คำแก้ที่ผู้ใช้เพิ่มเอง [(คำที่อ่านผิด, คำที่ถูก)] — คำยาวแก้ก่อน (กันคำสั้นไปแก้กลางคำยาว)"""
+    global _ocr_user_fixes
+    clean = [(str(a).strip(), str(b).strip()) for a, b in pairs if str(a).strip()]
+    _ocr_user_fixes = sorted(clean, key=lambda ab: len(ab[0]), reverse=True)
+
+
+def fix_thai_ocr(text: str) -> str:
+    import re
+    for wrong, right in _OCR_RULES:
+        text = text.replace(wrong, right)
+    text = re.sub(r"([\u0e31\u0e34-\u0e3a\u0e47-\u0e4e])\1+", r"\1", text)   # ่่ -> ่
+    if _ocr_user_fixes:
+        # แทนที่รอบเดียว (คำยาวก่อน) — คำที่แก้แล้วไม่ถูกคำแก้สั้นๆ ไปแก้ซ้ำกลางคำ
+        lookup = dict(_ocr_user_fixes)
+        pattern = "|".join(re.escape(wrong) for wrong, _ in _ocr_user_fixes)
+        text = re.sub(pattern, lambda m: lookup[m.group(0)], text)
+    return text
+
+
 def _join_ocr_spans(spans: list[dict]) -> str:
     """ต่อชิ้นข้อความ OCR ในบรรทัดเดียวกันเป็นประโยค
 
@@ -284,11 +311,10 @@ def _join_ocr_spans(spans: list[dict]) -> str:
         out += text
         prev = span
     out = " ".join(out.split())
-    # OCR มักแยก "ำ" เป็นนิคหิต + สระอา และเว้นวรรคหน้าสระบน/ล่าง
-    out = out.replace("ํ า", "ำ").replace("ํา", "ำ")
+    # OCR มักเว้นวรรคหน้าสระบน/ล่าง
     for mark in _THAI_MARKS:
         out = out.replace(" " + mark, mark)
-    return out
+    return fix_thai_ocr(out)
 
 
 def _is_ocr_noise(text: str) -> bool:
@@ -635,6 +661,16 @@ class Annotation:
     def copy(self) -> "Annotation":
         return Annotation(self.page, self.kind, [tuple(p) for p in self.points],
                           self.color, self.width)
+
+
+# สระบน/ล่างและวรรณยุกต์ไทย (อยู่ต้นคำเองไม่ได้)
+_THAI_MARKS = "ัิีึืฺุู็่้๊๋์ํ๎"
+
+
+def default_author() -> str:
+    """ชื่อผู้เขียนโน้ต = ชื่อผู้ใช้ Windows (ให้รู้ว่าใครเขียนเมื่อส่งไฟล์ต่อกัน)"""
+    import os
+    return os.environ.get("USERNAME") or os.environ.get("USER") or ""
 
 
 def sample_background_color(page: fitz.Page, rect: fitz.Rect) -> tuple[float, float, float]:
@@ -1729,6 +1765,39 @@ class PdfDocument:
         self.dirty = True
         return eraser
 
+    def find_text_rects(self, terms: list[str]) -> dict[int, list[fitz.Rect]]:
+        """ตำแหน่งทุกจุดที่เจอคำ (พิกัดบนหน้าที่ผู้ใช้เห็น) {หน้า: [กรอบ]}"""
+        found: dict[int, list[fitz.Rect]] = {}
+        for i in range(self.page_count):
+            page = self.doc.load_page(i)
+            for term in terms:
+                for rect in page.search_for(term):
+                    if page.rotation:
+                        rect = rect * page.rotation_matrix
+                    found.setdefault(i, []).append(fitz.Rect(rect))
+        return found
+
+    def cover_text(self, terms: list[str],
+                   color: tuple[float, float, float] | None = (0.0, 0.0, 0.0)) -> int:
+        """ปิดทับทุกจุดที่เจอคำ (2.2) — ใช้แผ่นปิดเดียวกับยางลบ: ตอนบันทึกข้อความข้างใต้
+        ถูกลบออกจากไฟล์จริง (redaction) ไม่ใช่แค่ทับให้มองไม่เห็น · color=None = สีพื้นกระดาษ
+        คืนจำนวนจุดที่ปิด"""
+        terms = [t.strip() for t in terms if t and t.strip()]
+        found = self.find_text_rects(terms)
+        total = sum(len(v) for v in found.values())
+        if not total:
+            return 0
+        self.push_undo()
+        for page_index, rects in found.items():
+            page = self.doc.load_page(page_index)
+            for rect in rects:
+                rect = rect + (-1, -1, 1, 1)          # เผื่อขอบตัวอักษรเล็กน้อย
+                raw = rect * page.derotation_matrix if page.rotation else rect
+                fill = color if color is not None else sample_background_color(page, raw)
+                self.erasers.append(Eraser(page_index, rect, fill))
+        self.dirty = True
+        return total
+
     def remove_eraser(self, eraser: Eraser) -> None:
         self.push_undo()
         if eraser in self.erasers:
@@ -2382,6 +2451,119 @@ class PdfDocument:
         self.dirty = True
         return len(annots)
 
+    # ---------- ความคิดเห็น / โน้ต (2.2) ----------
+    # โน้ตเป็น annotation มาตรฐานของ PDF (Text) — เปิดใน Acrobat/Edge ก็เห็นและตอบได้
+    # แผงความคิดเห็นรวมทั้งโน้ต ไฮไลต์ ขีดเส้น และรูปวาด (ทั้งที่มากับไฟล์และที่เพิ่งวาด)
+
+    COMMENT_KINDS = {
+        fitz.PDF_ANNOT_TEXT: "note", fitz.PDF_ANNOT_FREE_TEXT: "text",
+        fitz.PDF_ANNOT_HIGHLIGHT: "highlight", fitz.PDF_ANNOT_UNDERLINE: "underline",
+        fitz.PDF_ANNOT_STRIKE_OUT: "strike", fitz.PDF_ANNOT_SQUIGGLY: "underline",
+        fitz.PDF_ANNOT_INK: "drawing", fitz.PDF_ANNOT_SQUARE: "drawing",
+        fitz.PDF_ANNOT_CIRCLE: "drawing", fitz.PDF_ANNOT_LINE: "drawing",
+        fitz.PDF_ANNOT_POLYGON: "drawing", fitz.PDF_ANNOT_POLY_LINE: "drawing",
+    }
+
+    def comments(self) -> list[dict]:
+        """ความคิดเห็นทั้งไฟล์ เรียงตามหน้าแล้วจากบนลงล่าง
+
+        แต่ละรายการ: page, kind (note/text/highlight/underline/strike/drawing), text,
+        author, rect (พิกัดบนหน้าที่ผู้ใช้เห็น), xref (annotation ในไฟล์) หรือ floating (รูปวาดที่ยังไม่บันทึก)
+        """
+        out = []
+        for i in range(self.page_count):
+            page = self.doc.load_page(i)
+            for annot in page.annots():
+                kind = self.COMMENT_KINDS.get(annot.type[0])
+                if kind is None:
+                    continue
+                info = annot.info or {}
+                rect = fitz.Rect(annot.rect)
+                if page.rotation:
+                    rect = rect * page.rotation_matrix
+                text = (info.get("content") or "").strip()
+                if not text and kind in ("highlight", "underline", "strike"):
+                    # ไฮไลต์ไม่มีโน้ต -> แสดงข้อความที่ถูกไฮไลต์แทน (อ่านทีละช่วงที่ระบาย
+                    # ไม่ใช่ทั้งกรอบ — ไฮไลต์หลายคำในหน้าเดียวกรอบกว้างจนกินข้อความรอบข้างมาด้วย)
+                    text = self._marked_text(page, annot)
+                out.append({"page": i, "kind": kind, "text": text,
+                            "content": (info.get("content") or "").strip(),
+                            "author": (info.get("title") or "").strip(),
+                            "rect": rect, "xref": annot.xref, "floating": None})
+        for annot in self.annotations:
+            xs = [p[0] for p in annot.points] or [0]
+            ys = [p[1] for p in annot.points] or [0]
+            out.append({"page": annot.page, "kind": "drawing", "text": "", "content": "",
+                        "author": "",
+                        "rect": fitz.Rect(min(xs), min(ys), max(xs), max(ys)),
+                        "xref": None, "floating": annot})
+        out.sort(key=lambda c: (c["page"], round(c["rect"].y0), c["rect"].x0))
+        return out
+
+    @staticmethod
+    def _marked_text(page: fitz.Page, annot) -> str:
+        vertices = annot.vertices or []
+        parts: list[str] = []
+        for k in range(0, len(vertices) - 3, 4):
+            rect = fitz.Quad(*vertices[k:k + 4]).rect
+            # เอาเฉพาะตัวอักษรที่จุดกึ่งกลางอยู่ในแถบที่ระบาย (ไทยไม่มีเว้นวรรค ตัดตามขอบกรอบ
+            # จะได้ตัวอักษรข้างเคียงติดมาครึ่งตัว เช่น "แท็บใ")
+            chars = []
+            for block in page.get_text("rawdict", clip=rect + (-2, -2, 2, 2))["blocks"]:
+                for line in block.get("lines", []):
+                    for span in line["spans"]:
+                        for ch in span["chars"]:
+                            box = fitz.Rect(ch["bbox"])
+                            if rect.contains(fitz.Point((box.x0 + box.x1) / 2,
+                                                        (box.y0 + box.y1) / 2)):
+                                chars.append(ch["c"])
+            # สระบน/ล่าง วรรณยุกต์ที่ติดมาจากตัวหน้า (เช่น "ี่" ของ "ที่") ขึ้นต้นคำไม่ได้ ตัดทิ้ง
+            words = " ".join("".join(chars).split()).lstrip(_THAI_MARKS)
+            if words and words not in parts:
+                parts.append(words)
+        if not parts:
+            return " ".join(page.get_textbox(annot.rect).split())
+        return " · ".join(parts)
+
+    def add_note(self, page_index: int, point: fitz.Point, text: str, author: str = "") -> int:
+        """แปะโน้ตที่จุดบนหน้า (พิกัดที่ผู้ใช้เห็น) คืน xref ของโน้ต"""
+        self.push_undo()
+        page = self.doc.load_page(page_index)
+        target = point * page.derotation_matrix if page.rotation else point
+        annot = page.add_text_annot(target, text, icon="Comment")
+        annot.set_info(title=author or default_author())
+        annot.set_colors(stroke=(1.0, 0.8, 0.0))
+        annot.update()
+        self.dirty = True
+        return annot.xref
+
+    def edit_comment(self, page_index: int, xref: int, text: str) -> None:
+        self.push_undo()
+        page = self.doc.load_page(page_index)
+        annot = page.load_annot(xref)
+        annot.set_info(content=text)
+        annot.update()
+        self.dirty = True
+
+    def delete_comment(self, comment: dict) -> None:
+        """ลบความคิดเห็นจากแผง (annotation ในไฟล์ หรือรูปวาดที่ยังไม่บันทึก)"""
+        if comment.get("floating") is not None:
+            self.remove_annotation(comment["floating"])
+            return
+        self.push_undo()
+        page = self.doc.load_page(comment["page"])
+        page.delete_annot(page.load_annot(comment["xref"]))
+        self.dirty = True
+
+    def note_at(self, page_index: int, point: fitz.Point) -> int | None:
+        """โน้ตที่จุดนั้น (คลิกไอคอนโน้ตบนหน้า) คืน xref หรือ None"""
+        page = self.doc.load_page(page_index)
+        target = point * page.derotation_matrix if page.rotation else point
+        for annot in page.annots(types=[fitz.PDF_ANNOT_TEXT, fitz.PDF_ANNOT_FREE_TEXT]):
+            if (fitz.Rect(annot.rect) + (-3, -3, 3, 3)).contains(target):   # เผื่อขอบไอคอนเล็ก
+                return annot.xref
+        return None
+
     # ---------- แบบฟอร์ม PDF (AcroForm) ----------
 
     def is_form(self) -> bool:
@@ -2509,7 +2691,7 @@ class PdfDocument:
         textpage = page.get_textpage_ocr(
             flags=0, language=language, dpi=dpi, full=True, tessdata=tessdata_dir()
         )
-        return page.get_text(textpage=textpage)
+        return fix_thai_ocr(page.get_text(textpage=textpage))
 
     def ocr_to_searchable(
         self,

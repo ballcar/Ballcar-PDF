@@ -248,6 +248,8 @@ class PageViewer(QScrollArea):
     textboxEditRequested = Signal()
     pointPicked = Signal(int, float, float)
     editPointPicked = Signal(int, float, float)
+    notePointPicked = Signal(int, float, float)   # 2.2: คลิกจุดที่จะแปะโน้ต
+    noteClicked = Signal(int, int)                # 2.2: คลิกไอคอนโน้ตบนหน้า (page, xref)
     rectDragged = Signal(int, object)
     eraseDragged = Signal(int, object)
     annotDrawn = Signal(int, object)
@@ -858,12 +860,18 @@ class PageViewer(QScrollArea):
             self.stop_point_pick()
             if mode == "edit":
                 self.editPointPicked.emit(idx, px, py)
+            elif mode == "note":
+                self.notePointPicked.emit(idx, px, py)
             else:
                 self.pointPicked.emit(idx, px, py)
             return
 
         tb = self.doc.textbox_at(idx, point)
         stamp = self.doc.stamp_at(idx, point)
+        note = self.doc.note_at(idx, point) if tb is None and stamp is None else None
+        if note is not None:            # คลิกไอคอนโน้ต = เปิดอ่าน/แก้ในแผงความคิดเห็น
+            self.noteClicked.emit(idx, note)
+            return
         if tb is not None:
             self.clear_selection()
             self.selected_textbox = tb

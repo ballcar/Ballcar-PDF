@@ -24,13 +24,13 @@ from PySide6.QtWidgets import (
 if __package__ in (None, ""):  # รันตรงๆ ด้วย python app/main.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from app import (assistant, assistant_ui, autosave, batch, errorlog, homepage, i18n, icons,
-                     library, organizer, pdfops, recent, semantic, theme, toolpanel, updater)
+                     comments, library, organizer, pdfops, recent, semantic, theme, toolpanel, updater)
     from app.i18n import t
     from app.pdfops import PdfDocument, merge_files, parse_page_ranges
     from app.viewer import PageViewer, pixmap_to_qimage
 else:
     from . import (assistant, assistant_ui, autosave, batch, errorlog, homepage, i18n, icons,
-                   library, organizer, pdfops, recent, semantic, theme, toolpanel, updater)
+                   comments, library, organizer, pdfops, recent, semantic, theme, toolpanel, updater)
     from .i18n import t
     from .pdfops import PdfDocument, merge_files, parse_page_ranges
     from .viewer import PageViewer, pixmap_to_qimage
@@ -680,6 +680,8 @@ class MainWindow(QMainWindow):
         self.viewer.textboxEditRequested.connect(self.edit_selected_textbox)
         self.viewer.pointPicked.connect(self._on_point_picked)
         self.viewer.editPointPicked.connect(self._on_edit_point_picked)
+        self.viewer.notePointPicked.connect(self._on_note_point_picked)
+        self.viewer.noteClicked.connect(self._on_note_clicked)
         self.viewer.rectDragged.connect(self._on_rect_dragged)
         self.viewer.eraseDragged.connect(self._on_erase_dragged)
         self.viewer.annotDrawn.connect(self._on_annot_drawn)
@@ -836,6 +838,14 @@ class MainWindow(QMainWindow):
         self._viewer_area = viewer_area
 
         splitter.addWidget(self.text_panel)
+        # 2.2: แผงความคิดเห็น (โน้ต / ไฮไลต์ / รูปวาด ทั้งไฟล์)
+        self.comments_panel = comments.CommentsPanel()
+        self.comments_panel.addRequested.connect(self.add_note_mode)
+        self.comments_panel.goRequested.connect(self._goto_comment)
+        self.comments_panel.editRequested.connect(self._edit_comment)
+        self.comments_panel.deleteRequested.connect(self._delete_comment)
+        self.comments_panel.hide()
+        splitter.addWidget(self.comments_panel)
         # 2.0: ภาพย่อหน้าอยู่ขวาสุด (ซ้ายเป็นแถบเครื่องมือแล้ว) — แสดงเฉพาะไฟล์หลายหน้า
         splitter.addWidget(left)
         # ลำดับแผง: ห้ามอ้างด้วยเลขตำแหน่ง ใช้ splitter.indexOf(แผง) เสมอ (ย้ายแผงแล้วไม่พัง)
@@ -871,6 +881,8 @@ class MainWindow(QMainWindow):
         self._build_toolbars()
         self._build_menu()
         self._update_state()
+
+        pdfops.set_ocr_corrections(i18n.get_setting("ocr_fixes", []) or [])   # 2.2 คำแก้ OCR
 
         # สำรองงานอัตโนมัติแบบกู้คืน (Pre-save) — id เฉพาะหน้าต่างนี้
         self._session_id = uuid.uuid4().hex[:8]
@@ -1034,8 +1046,9 @@ class MainWindow(QMainWindow):
         self.tools_button.setPopupMode(QToolButton.InstantPopup)
         self.tools_button.setObjectName("toolsButton")
         tools_menu = QMenu(self)
+        self.act_add_note = self._act(t("cm.add_note"), self.add_note_mode, icon="sticky-note")
         for a in (self.act_add_text, self.act_edit_text, self.act_highlight,
-                  self.act_markup, self.act_erase):
+                  self.act_markup, self.act_erase, self.act_add_note):
             tools_menu.addAction(a)
         tools_menu.addSeparator()
         # ลายเซ็น = เมนูย่อยซ้อน (คลังลายเซ็นสร้างตอนกางเมนู)
@@ -1114,6 +1127,7 @@ class MainWindow(QMainWindow):
             self._act(t("tools.edit_text"), self.edit_text_dialog, icon="pencil-line"),
             self._act(t("tools.fill_form"), self.fill_form_dialog, icon="clipboard-list"),
             self._act(t("tools.password"), self.password_dialog, icon="lock"),
+            self._act(t("tools.cover_text"), self.cover_text_dialog, icon="eraser"),
             self._act(t("tools.batch"), self.batch_dialog, icon="layers"),
             self._act(t("tools.merge"), self.merge_dialog, icon="merge"),
             self._act(t("tools.split"), self.split_dialog, icon="scissors"),
@@ -1122,6 +1136,7 @@ class MainWindow(QMainWindow):
             self._act(t("tools.save_images"), self.export_images_dialog, icon="image-down"),
             self._act(t("tools.extract_text"), self.extract_all_text, icon="file-text"),
             self._act(t("tools.ocr"), self.ocr_dialog, icon="scan-text"),
+            self._act(t("tools.ocr_fixes"), self.ocr_fixes_dialog, icon="list-ordered"),
             self._act(t("tools.to_word"), self.export_word, icon="file-output"),
             self._act(t("tools.to_excel"), self.export_excel, icon="sheet"),
             self._act(t("tools.extract_images"), self.export_embedded_images, icon="images"),
@@ -1134,6 +1149,11 @@ class MainWindow(QMainWindow):
             m_tools.addAction(a)
 
         m_view = menu.addMenu(t("menu.view"))
+        self.act_show_comments = QAction(icons.icon("message-square"), t("view.show_comments"),
+                                         self, checkable=True)
+        self.act_show_comments.setChecked(self.comments_panel.isVisible())
+        self.act_show_comments.toggled.connect(self._toggle_comments_panel)
+        m_view.addAction(self.act_show_comments)
         toggle_text = QAction(icons.icon("align-left"), t("view.show_text"), self, checkable=True)
         toggle_text.setChecked(self.text_panel.isVisible())
         toggle_text.toggled.connect(self._toggle_text_panel)
@@ -1310,7 +1330,7 @@ class MainWindow(QMainWindow):
 
         groups = [
             (t("group.edit"), [self.act_add_text, self.act_edit_text, self.act_highlight,
-                               self.act_markup, self.act_erase,
+                               self.act_markup, self.act_erase, self.act_add_note,
                                *pick("tools.signature", "tools.insert_image", "tools.fill_form",
                                      "tools.watermark_text", "tools.watermark_image")]),
             (t("group.pages"), pick("pages.insert_blank", "pages.insert_pdf", "pages.delete",
@@ -1319,10 +1339,10 @@ class MainWindow(QMainWindow):
                                     "tools.page_numbers")),
             (t("group.files"), pick("tools.merge", "tools.split", "tools.compress",
                                     "tools.batch")),
-            (t("group.convert"), pick("tools.to_word", "tools.to_excel", "tools.ocr",
+            (t("group.convert"), pick("tools.to_word", "tools.to_excel", "tools.ocr", "tools.ocr_fixes",
                                       "tools.save_images", "tools.extract_text",
                                       "tools.extract_images")),
-            (t("group.security"), pick("tools.password")),
+            (t("group.security"), pick("tools.password", "tools.cover_text")),
             (t("group.assistant"), [self.act_assistant]),
         ]
         self.tool_panel.set_texts(t("panel.title"), t("panel.search"), t("panel.empty"),
@@ -1416,6 +1436,9 @@ class MainWindow(QMainWindow):
 
     def _retranslate(self) -> None:
         """เปลี่ยนข้อความของส่วนที่ไม่ได้สร้างใหม่ตอนเปลี่ยนภาษา"""
+        self.comments_panel.retranslate()
+        if self.comments_panel.isVisible():
+            self._refresh_comments()
         self.thumbs.setToolTip(t("thumb.tip"))
         self._hint_label.setText(t("thumb.hint"))
         self.text_panel.setPlaceholderText(t("text.placeholder"))
@@ -1702,6 +1725,8 @@ class MainWindow(QMainWindow):
         self._update_text_panel()
         if self._bookmark_panel.isVisible():
             self._refresh_bookmarks()
+        if self.comments_panel.isVisible():
+            self._refresh_comments()
         self._update_state()
 
     def _selected_rows(self) -> list[int]:
@@ -3921,6 +3946,205 @@ class MainWindow(QMainWindow):
         layout.addLayout(indent_row)
 
         self._bookmark_panel.hide()
+
+    # ---------------- คำแก้ OCR ภาษาไทย (2.2) ----------------
+
+    def ocr_fixes_dialog(self) -> None:
+        """ตารางคำที่ OCR อ่านผิดบ่อย -> คำที่ถูก (ชื่อบริษัท สินค้า ศัพท์เฉพาะของออฟฟิศ)
+        ใช้ตอนแปลงไฟล์สแกนเป็น Word และอ่านข้อความด้วย OCR"""
+        from PySide6.QtWidgets import (QAbstractItemView, QDialogButtonBox, QHeaderView,
+                                       QTableWidget, QTableWidgetItem)
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(t("ocrfix.title"))
+        dialog.resize(520, 440)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(t("ocrfix.intro"))
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        table = QTableWidget(0, 2)
+        table.setHorizontalHeaderLabels([t("ocrfix.wrong"), t("ocrfix.right")])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        for wrong, right in i18n.get_setting("ocr_fixes", []) or []:
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setItem(row, 0, QTableWidgetItem(wrong))
+            table.setItem(row, 1, QTableWidgetItem(right))
+        layout.addWidget(table, 1)
+
+        row_buttons = QHBoxLayout()
+        add = QPushButton("+ " + t("ocrfix.add"))
+        remove = QPushButton(t("ocrfix.remove"))
+
+        def add_row() -> None:
+            table.insertRow(table.rowCount())
+            table.setCurrentCell(table.rowCount() - 1, 0)
+            table.editItem(table.item(table.rowCount() - 1, 0) or QTableWidgetItem())
+
+        def remove_rows() -> None:
+            for row in sorted({i.row() for i in table.selectedIndexes()}, reverse=True):
+                table.removeRow(row)
+
+        add.clicked.connect(add_row)
+        remove.clicked.connect(remove_rows)
+        row_buttons.addWidget(add)
+        row_buttons.addWidget(remove)
+        row_buttons.addStretch(1)
+        layout.addLayout(row_buttons)
+        rules = QLabel(t("ocrfix.rules"))
+        rules.setWordWrap(True)
+        rules.setProperty("role", "hint")
+        layout.addWidget(rules)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        pairs = []
+        for row in range(table.rowCount()):
+            wrong = table.item(row, 0).text().strip() if table.item(row, 0) else ""
+            right = table.item(row, 1).text().strip() if table.item(row, 1) else ""
+            if wrong and wrong != right:
+                pairs.append([wrong, right])
+        i18n.set_setting("ocr_fixes", pairs)
+        pdfops.set_ocr_corrections(pairs)
+        self.statusBar().showMessage(t("ocrfix.saved", n=len(pairs)), 6000)
+
+    # ---------------- ปิดทับคำที่ค้นหาทุกหน้า (2.2) ----------------
+
+    def cover_text_dialog(self) -> None:
+        """พิมพ์คำ/เลขที่ต้องซ่อน (หลายคำได้ บรรทัดละคำ) เห็นจำนวนที่เจอก่อน แล้วปิดทับทุกหน้า
+        ตอนบันทึกข้อความข้างใต้ถูกลบออกจากไฟล์จริง"""
+        if not self.doc or not self.doc.page_count:
+            return
+        from PySide6.QtWidgets import QDialogButtonBox, QRadioButton
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(t("cover.title"))
+        dialog.setMinimumWidth(460)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(t("cover.intro"))
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        terms_edit = QPlainTextEdit()
+        terms_edit.setPlaceholderText(t("cover.placeholder"))
+        terms_edit.setFixedHeight(90)
+        prefill = self.search_box.text().strip() if hasattr(self, "search_box") else ""
+        terms_edit.setPlainText(prefill)
+        layout.addWidget(terms_edit)
+        count = QLabel()
+        count.setProperty("role", "hint")
+        layout.addWidget(count)
+        black = QRadioButton(t("cover.black"))
+        paper = QRadioButton(t("cover.paper"))
+        black.setChecked(True)
+        layout.addWidget(black)
+        layout.addWidget(paper)
+        note = QLabel(t("cover.note"))
+        note.setWordWrap(True)
+        note.setProperty("role", "hint")
+        layout.addWidget(note)
+        scanned = [i for i in range(self.doc.page_count) if self.doc.needs_ocr(i)]
+        if scanned:
+            warn = QLabel("⚠ " + t("cover.scanned", n=len(scanned)))
+            warn.setWordWrap(True)
+            warn.setProperty("role", "hint")
+            layout.addWidget(warn)
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
+        apply_btn = buttons.addButton(t("cover.apply"), QDialogButtonBox.AcceptRole)
+        apply_btn.setProperty("role", "primary")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        def terms() -> list[str]:
+            return [x.strip() for x in terms_edit.toPlainText().splitlines() if x.strip()]
+
+        def update_count() -> None:
+            found = self.doc.find_text_rects(terms()) if terms() else {}
+            hits = sum(len(v) for v in found.values())
+            count.setText(t("cover.found", n=hits, pages=len(found)) if terms() else "")
+            apply_btn.setEnabled(hits > 0)
+
+        terms_edit.textChanged.connect(update_count)
+        update_count()
+        if dialog.exec() != QDialog.Accepted:
+            return
+        n = self.doc.cover_text(terms(), color=(0.0, 0.0, 0.0) if black.isChecked() else None)
+        self._refresh_all(keep_row=self.viewer.index)
+        self.statusBar().showMessage(t("cover.done", n=n), 10000)
+
+    # ---------------- ความคิดเห็น / โน้ต (2.2) ----------------
+
+    def _toggle_comments_panel(self, on: bool) -> None:
+        self.comments_panel.setVisible(on)
+        if on:
+            self._give_panel_width(self.comments_panel, 280)
+            self._refresh_comments()
+
+    def _show_comments_panel(self) -> None:
+        if not self.comments_panel.isVisible():
+            self.act_show_comments.setChecked(True)     # -> _toggle_comments_panel
+
+    def _refresh_comments(self, select: tuple | None = None) -> None:
+        self.comments_panel.set_comments(self.doc.comments() if self.doc else [], select)
+
+    def add_note_mode(self) -> None:
+        """รอคลิกจุดบนหน้าที่จะแปะโน้ต"""
+        if not self.doc or not self.doc.page_count:
+            return
+        if self._organizing():
+            self.act_organize.setChecked(False)
+        self.deselect_stamp()
+        self.deselect_textbox()
+        self.viewer.start_point_pick(mode="note")
+        self.statusBar().showMessage(t("cm.click_point"), 0)
+
+    def _ask_note(self, title: str, initial: str = "") -> str | None:
+        text, ok = QInputDialog.getMultiLineText(self, title, t("cm.prompt"), initial)
+        return text.strip() if ok else None
+
+    def _on_note_point_picked(self, page_index: int, px: float, py: float) -> None:
+        text = self._ask_note(t("cm.add_note"))
+        if not text:
+            self.statusBar().clearMessage()
+            return
+        xref = self.doc.add_note(page_index, fitz.Point(px, py), text)
+        self._show_comments_panel()
+        self._refresh_all(keep_row=page_index)
+        self._refresh_comments(select=(page_index, xref))
+        self.statusBar().showMessage(t("cm.added"), 6000)
+
+    def _on_note_clicked(self, page_index: int, xref: int) -> None:
+        """คลิกไอคอนโน้ตบนหน้า -> เปิดแผงแล้วเลือกโน้ตนั้น (อ่านข้อความเต็มได้)"""
+        self._show_comments_panel()
+        self._refresh_comments(select=(page_index, xref))
+        current = self.comments_panel.current()
+        if current:
+            self.statusBar().showMessage(current["text"][:200], 8000)
+
+    def _goto_comment(self, c: dict) -> None:
+        if self._organizing():
+            self.act_organize.setChecked(False)
+        self.goto_page(c["page"])
+
+    def _edit_comment(self, c: dict) -> None:
+        if c.get("xref") is None:
+            return
+        text = self._ask_note(t("cm.edit_title"), c.get("content", ""))
+        if text is None:
+            return
+        self.doc.edit_comment(c["page"], c["xref"], text)
+        self._refresh_all(keep_row=c["page"])
+        self._refresh_comments(select=(c["page"], c["xref"]))
+
+    def _delete_comment(self, c: dict) -> None:
+        self.doc.delete_comment(c)
+        self._refresh_all(keep_row=c["page"])
+        self.statusBar().showMessage(t("cm.deleted"), 5000)
 
     def _toggle_bookmark_panel(self, on: bool) -> None:
         self._bookmark_panel.setVisible(on)
