@@ -1008,9 +1008,11 @@ class MainWindow(QMainWindow):
         bar.addAction(self.act_redo)
 
         bar.addSeparator()
-        self.act_prev = self._act(t("tb.prev"), lambda: self.goto_page(self.viewer.index - 1),
+        self.act_prev = self._act(t("tb.prev"),
+                                  self._in_doc_view(lambda: self.goto_page(self.viewer.index - 1)),
                                   "PgUp", icon="chevron-left")
-        self.act_next = self._act(t("tb.next"), lambda: self.goto_page(self.viewer.index + 1),
+        self.act_next = self._act(t("tb.next"),
+                                  self._in_doc_view(lambda: self.goto_page(self.viewer.index + 1)),
                                   "PgDown", icon="chevron-right")
         bar.addAction(self.act_prev)
         bar.addAction(self.act_next)
@@ -1022,14 +1024,17 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.page_label)
 
         bar.addSeparator()
+        # ปุ่มมุมมองเอกสาร: ถ้ากำลังจัดเรียงหน้าแบบตาราง ให้กลับไปหน้าเอกสารก่อน (ไม่งั้นกดแล้วไม่เห็นผล)
         bar.addAction(self._act(t("tb.zoom_out"),
-                                lambda: self.viewer.set_zoom(self.viewer.zoom / 1.25),
+                                self._in_doc_view(lambda: self.viewer.set_zoom(self.viewer.zoom / 1.25)),
                                 "Ctrl+-", icon="zoom-out"))
         bar.addAction(self._act(t("tb.zoom_in"),
-                                lambda: self.viewer.set_zoom(self.viewer.zoom * 1.25),
+                                self._in_doc_view(lambda: self.viewer.set_zoom(self.viewer.zoom * 1.25)),
                                 "Ctrl+=", icon="zoom-in"))
-        bar.addAction(self._act(t("tb.fit_width"), self.viewer.fit_width, icon="move-horizontal"))
-        self.act_fit_page = self._act(t("tb.fit_page"), self.viewer.fit_page, "Ctrl+0", icon="rectangle-vertical")
+        bar.addAction(self._act(t("tb.fit_width"), self._in_doc_view(self.viewer.fit_width),
+                                icon="move-horizontal"))
+        self.act_fit_page = self._act(t("tb.fit_page"), self._in_doc_view(self.viewer.fit_page),
+                                      "Ctrl+0", icon="rectangle-vertical")
         bar.addAction(self.act_fit_page)
         self.act_fullscreen = self._act(t("tb.fullscreen"), self.toggle_fullscreen, "F11",
                                         icon="minimize" if self.isFullScreen() else "maximize")
@@ -1462,6 +1467,16 @@ class MainWindow(QMainWindow):
                 self.home.refresh()      # รายการไฟล์ล่าสุดอาจเปลี่ยนไปแล้ว
 
     # ---------------- จัดเรียงหน้าแบบตาราง (2.1) ----------------
+
+    def _in_doc_view(self, fn):
+        """ห่อคำสั่งของหน้าเอกสาร (ซูม/พอดีหน้า/เลื่อนหน้า) — อยู่ในโหมดตารางให้ออกมาก่อนแล้วค่อยทำ"""
+        def run():
+            if self._organizing():
+                self.act_organize.setChecked(False)
+                QTimer.singleShot(0, fn)          # รอให้หน้าเอกสารกลับมาแสดงก่อน ขนาดจอจะถูก
+            else:
+                fn()
+        return run
 
     def _organizing(self) -> bool:
         act = getattr(self, "act_organize", None)
@@ -2151,6 +2166,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("ย้ายลำดับหน้าแล้ว — อย่าลืมบันทึก", 5000)
 
     def _on_page_box(self) -> None:
+        if self._organizing():
+            self.act_organize.setChecked(False)
         try:
             self.goto_page(int(self.page_box.text()) - 1)
         except ValueError:

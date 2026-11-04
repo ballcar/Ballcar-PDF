@@ -106,5 +106,17 @@ assert abs(w._thumb_panel.width() - before) <= 2, (before, w._thumb_panel.width(
 assert w.organizer.minimumSizeHint().width() < 700, w.organizer.minimumSizeHint()
 print("OK  เปลี่ยนธีม/ภาษาแล้วแถบภาพย่อไม่ถูกบีบแคบ")
 
+# ---- อยู่ในตาราง แล้วกดดูเต็มหน้ากระดาษ / ซูม / หน้าถัดไป = กลับหน้าเอกสารแล้วทำตามนั้น ----
+from PySide6.QtTest import QTest
+w.viewer.set_zoom(3.0)
+w.act_organize.setChecked(True); app.processEvents()
+w.act_fit_page.trigger(); QTest.qWait(50)
+assert not w.act_organize.isChecked() and w._doc_stack.currentWidget() is w.viewer
+assert w.viewer.zoom < 3.0, "ต้องพอดีหน้ากระดาษจริง ไม่ใช่แค่สลับหน้าจอ"
+w.act_organize.setChecked(True); app.processEvents()
+w.act_next.trigger(); QTest.qWait(50)
+assert not w.act_organize.isChecked() and w._doc_stack.currentWidget() is w.viewer
+print("OK  อยู่ในตารางแล้วกดดูเต็มหน้ากระดาษ/ซูม/เลื่อนหน้า = กลับหน้าเอกสารแล้วทำให้ทันที")
+
 w.doc.dirty = False
 print("\nผ่านทั้งหมด")
