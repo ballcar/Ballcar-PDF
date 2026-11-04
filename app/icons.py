@@ -26,7 +26,7 @@ COLORS = {
     "undo-2": "#7c4dff", "redo-2": "#7c4dff",
     "chevron-left": "#0f9ba8", "chevron-right": "#0f9ba8",
     "zoom-in": "#0f9ba8", "zoom-out": "#0f9ba8", "move-horizontal": "#0f9ba8",
-    "rectangle-vertical": "#0f9ba8", "maximize": "#0f9ba8", "minimize": "#0f9ba8",
+    "rectangle-vertical": "#0f9ba8", "maximize": "#0f9ba8", "minimize": "#0f9ba8", "layout-grid": "#0f9ba8",
     "search": "#2f6fde", "circle-x": "#e5484d",
     # แก้ไขเนื้อหา
     "type": "#2f6fde", "pencil-line": "#f08c00", "highlighter": "#d4a000", "pen-tool": "#7c4dff",

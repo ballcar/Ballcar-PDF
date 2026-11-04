@@ -220,6 +220,21 @@ def stylesheet(p: Palette) -> str:
             border:1px solid {p.border}; border-radius:12px; padding:4px 10px; text-align:left; }}
         QPushButton[role="chip"]:hover {{ border-color:{p.accent}; background:{hover}; }}
         #homePage {{ background:{p.window}; }}
+        #organizer {{ background:{p.window}; }}
+        QTabBar#docTabs {{ background:{p.surface}; }}
+        QTabBar#docTabs::tab {{ background:{p.surface}; color:{p.text_muted}; padding:6px 10px 6px 14px;
+            border:none; border-bottom:2px solid transparent; min-width:90px; max-width:260px; }}
+        QTabBar#docTabs::tab:selected {{ color:{p.text}; font-weight:bold;
+            border-bottom:2px solid {p.accent}; background:{p.window}; }}
+        QTabBar#docTabs::tab:hover:!selected {{ color:{p.text}; background:{_mix(p.surface, p.accent, 0.08)}; }}
+        #organizerBar {{ background:{p.surface}; border-bottom:1px solid {p.border}; }}
+        #pageGrid {{ background:{p.window}; border:none; }}
+        #pageGrid::item {{ border:2px solid transparent; border-radius:6px; padding:4px; color:{p.text}; }}
+        #pageGrid::item:hover {{ background:{_mix(p.window, p.accent, 0.08)}; }}
+        #pageGrid::item:selected {{ background:{_mix(p.window, p.accent, 0.14)};
+            border:2px solid {p.accent}; color:{p.text}; }}
+        QToolButton#organizerDone {{ background:{p.accent}; color:{p.accent_text}; font-weight:bold;
+            border:none; border-radius:6px; padding:5px 16px; margin-left:8px; }}
         QLabel[role="homeTitle"] {{ font-size:26px; font-weight:bold; color:{p.text}; }}
         QPushButton[role="card"] {{ background:{p.surface}; color:{p.text}; text-align:left;
             border:1px solid {p.border}; border-radius:8px; padding:10px 14px; }}

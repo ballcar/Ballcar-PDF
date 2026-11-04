@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import uuid
@@ -16,20 +17,20 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QToolButton,
-    QPushButton, QSizePolicy, QSplitter, QStackedWidget, QStatusBar, QToolBar, QTreeWidget, QTreeWidgetItem,
+    QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabBar, QStatusBar, QToolBar, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
 )
 
 if __package__ in (None, ""):  # รันตรงๆ ด้วย python app/main.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from app import (assistant, assistant_ui, autosave, batch, errorlog, homepage, i18n, icons,
-                     library, pdfops, recent, semantic, theme, toolpanel, updater)
+                     library, organizer, pdfops, recent, semantic, theme, toolpanel, updater)
     from app.i18n import t
     from app.pdfops import PdfDocument, merge_files, parse_page_ranges
     from app.viewer import PageViewer, pixmap_to_qimage
 else:
     from . import (assistant, assistant_ui, autosave, batch, errorlog, homepage, i18n, icons,
-                   library, pdfops, recent, semantic, theme, toolpanel, updater)
+                   library, organizer, pdfops, recent, semantic, theme, toolpanel, updater)
     from .i18n import t
     from .pdfops import PdfDocument, merge_files, parse_page_ranges
     from .viewer import PageViewer, pixmap_to_qimage
@@ -792,6 +793,23 @@ class MainWindow(QMainWindow):
         viewer_layout = QVBoxLayout(viewer_area)
         viewer_layout.setContentsMargins(0, 0, 0, 0)
         viewer_layout.setSpacing(0)
+        # 2.1: แท็บ — เปิดหลายไฟล์ในหน้าต่างเดียว (หน้าจอเอกสารชุดเดียว สลับเอกสารที่แสดง)
+        self._tabs: list[dict] = []          # [{doc, index, zoom, scroll}] เรียงตามแท็บ
+        self.tab_bar = QTabBar()
+        self.tab_bar.setObjectName("docTabs")
+        self.tab_bar.setTabsClosable(True)
+        self.tab_bar.setMovable(True)
+        self.tab_bar.setExpanding(False)
+        self.tab_bar.setDocumentMode(True)
+        self.tab_bar.setElideMode(Qt.ElideMiddle)
+        self.tab_bar.setUsesScrollButtons(True)
+        # แท็บเยอะ = เลื่อนดูด้วยปุ่มลูกศร ไม่ดันพื้นที่เอกสาร/แถบภาพย่อให้แคบลง
+        self.tab_bar.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.tab_bar.currentChanged.connect(self._on_tab_changed)
+        self.tab_bar.tabCloseRequested.connect(self.close_tab)
+        self.tab_bar.tabMoved.connect(self._on_tab_moved)
+        self.tab_bar.hide()
+        viewer_layout.addWidget(self.tab_bar)
         viewer_layout.addWidget(self._placing_bar)
         viewer_layout.addWidget(self._stamp_bar)
         viewer_layout.addWidget(self._text_bar)
@@ -804,6 +822,14 @@ class MainWindow(QMainWindow):
         self.home.open_requested.connect(self._open_path)
         self._doc_stack.addWidget(self.home)
         self._doc_stack.addWidget(self.viewer)
+        # 2.1: จัดเรียงหน้าแบบตาราง — สลับแทนพื้นที่เอกสาร
+        self.organizer = organizer.Organizer()
+        self.organizer.grid.orderChanged.connect(self._on_grid_reordered)
+        self.organizer.grid.pageActivated.connect(self._open_page_from_grid)
+        self.organizer.grid.customContextMenuRequested.connect(self._grid_context_menu)
+        self.organizer.doneRequested.connect(lambda: self.act_organize.setChecked(False))
+        self.organizer.sizeChanged.connect(lambda _w: self._rebuild_grid())
+        self._doc_stack.addWidget(self.organizer)
         viewer_layout.addWidget(self._doc_stack)
         self._build_selection_popup()
         splitter.addWidget(viewer_area)
@@ -854,20 +880,36 @@ class MainWindow(QMainWindow):
         self._autosave_timer.start()
 
     def _autosave_tick(self) -> None:
-        """แอบเซฟสำเนากู้คืน ถ้ามีงานที่ยังไม่บันทึก (ไม่แตะไฟล์ต้นฉบับ)"""
-        if not self.doc or not self.doc.dirty:
-            return
-        try:
-            with self.doc.flattened() as flat:
-                data = flat.tobytes()
-            autosave.write_recovery(
-                data, str(self.doc.path) if self.doc.path else None, self._session_id)
-        except Exception:
-            pass   # สำรองล้มเหลวไม่ควรทำให้โปรแกรมสะดุด
+        """แอบเซฟสำเนากู้คืนของทุกแท็บที่ยังไม่บันทึก (ไม่แตะไฟล์ต้นฉบับ)"""
+        for doc in self._all_docs():
+            if not doc.dirty:
+                continue
+            try:
+                with doc.flattened() as flat:
+                    data = flat.tobytes()
+                autosave.write_recovery(
+                    data, str(doc.path) if doc.path else None, self._doc_session(doc))
+            except Exception:
+                pass   # สำรองล้มเหลวไม่ควรทำให้โปรแกรมสะดุด
 
-    def _clear_autosave(self) -> None:
-        autosave.clear_recovery(
-            str(self.doc.path) if (self.doc and self.doc.path) else None, self._session_id)
+    def _all_docs(self) -> list:
+        """เอกสารที่เปิดอยู่ทุกแท็บ (รวมเอกสารปัจจุบันเผื่อถูกตั้งตรงโดยไม่ผ่านแท็บ)"""
+        docs = [tab["doc"] for tab in self._tabs]
+        if self.doc is not None and all(d is not self.doc for d in docs):
+            docs.append(self.doc)
+        return docs
+
+    def _doc_session(self, doc) -> str:
+        """id ไฟล์กู้คืน — แยกต่อเอกสาร (หลายแท็บไม่เขียนทับกัน)"""
+        if not getattr(doc, "session_id", None):
+            doc.session_id = f"{self._session_id}-{uuid.uuid4().hex[:6]}"
+        return doc.session_id
+
+    def _clear_autosave(self, doc=None) -> None:
+        doc = doc or self.doc
+        if doc is None:
+            return
+        autosave.clear_recovery(str(doc.path) if doc.path else None, self._doc_session(doc))
 
     def offer_recovery(self) -> None:
         """เปิดโปรแกรมแล้วเจองานค้างจากครั้งก่อน — ถามว่าจะกู้ไหม"""
@@ -882,12 +924,10 @@ class MainWindow(QMainWindow):
             QMessageBox.Yes | QMessageBox.No)
         if answer == QMessageBox.Yes:
             try:
-                self.doc = PdfDocument(rec["pdf_path"])
-                self.doc.path = Path(rec["original"]) if rec["original"] else None
-                self.doc.dirty = True    # เป็นงานที่ยังไม่บันทึกลงไฟล์จริง
-                self.viewer.set_document(self.doc)
-                self._refresh_all(keep_row=0)
-                self.viewer.fit_width()
+                recovered = PdfDocument(rec["pdf_path"])
+                recovered.path = Path(rec["original"]) if rec["original"] else None
+                recovered.dirty = True    # เป็นงานที่ยังไม่บันทึกลงไฟล์จริง
+                self._add_tab(recovered)
                 self.statusBar().showMessage(t("recover.done"), 8000)
             except Exception as exc:
                 QMessageBox.warning(self, t("recover.title"), str(exc))
@@ -961,6 +1001,10 @@ class MainWindow(QMainWindow):
         self.act_fullscreen = self._act(t("tb.fullscreen"), self.toggle_fullscreen, "F11",
                                         icon="minimize" if self.isFullScreen() else "maximize")
         bar.addAction(self.act_fullscreen)
+        self.act_organize = self._act(t("tb.organize"), lambda: None, "Ctrl+G", icon="layout-grid")
+        self.act_organize.setCheckable(True)
+        self.act_organize.toggled.connect(self._set_organizing)
+        bar.addAction(self.act_organize)
 
         bar.addSeparator()
         previous_search = getattr(self, "search_box", None)
@@ -1032,6 +1076,14 @@ class MainWindow(QMainWindow):
         m_file.addSeparator()
         m_file.addAction(self.act_print)
         m_file.addSeparator()
+        self.act_close_tab = self._act(t("file.close_tab"), self.close_tab, "Ctrl+W", icon="circle-x")
+        m_file.addAction(self.act_close_tab)
+        next_tab = self._act(t("file.next_tab"), self.next_tab, "Ctrl+Tab", icon="chevron-right")
+        prev_tab = self._act(t("file.prev_tab"), lambda: self.next_tab(-1), "Ctrl+Shift+Tab",
+                             icon="chevron-left")
+        for a in (next_tab, prev_tab):
+            m_file.addAction(a)
+        m_file.addSeparator()
         m_file.addAction(self._act(t("file.exit"), self.close, "Ctrl+Q", icon="log-out"))
 
         m_edit = menu.addMenu(t("menu.edit"))
@@ -1093,6 +1145,7 @@ class MainWindow(QMainWindow):
         m_view.addAction(toggle_bm)
         m_view.addAction(self.act_fit_page)
         m_view.addAction(self.act_fullscreen)
+        m_view.addAction(self.act_organize)
         m_view.addSeparator()
         toggle_tools = QAction(icons.icon("panel-left"), t("view.show_tools"), self, checkable=True)
         toggle_tools.setChecked(self.tool_panel.isVisible())
@@ -1119,6 +1172,7 @@ class MainWindow(QMainWindow):
         m_help.addAction(self._act(t("help.about"), self.show_about, icon="info"))
         self._refresh_tool_panel()
         self._refresh_home()
+        self._refresh_organizer()
 
     def toggle_fullscreen(self) -> None:
         """ดูเต็มจอ (F11) — ซ่อนแถบเมนู/แถบเครื่องมือด้านซ้าย/แถบสถานะ เหลือแต่เอกสาร
@@ -1145,11 +1199,91 @@ class MainWindow(QMainWindow):
 
     def _show_home(self, show: bool) -> None:
         """สลับระหว่างหน้าแรก (ยังไม่เปิดไฟล์) กับหน้าเอกสาร"""
-        target = self.home if show else self.viewer
+        if show and self._organizing():
+            self.act_organize.setChecked(False)      # ปิดไฟล์แล้ว ไม่มีหน้าให้จัดเรียง
+        target = self.home if show else (self.organizer if self._organizing() else self.viewer)
         if self._doc_stack.currentWidget() is not target:
             self._doc_stack.setCurrentWidget(target)
             if show:
                 self.home.refresh()      # รายการไฟล์ล่าสุดอาจเปลี่ยนไปแล้ว
+
+    # ---------------- จัดเรียงหน้าแบบตาราง (2.1) ----------------
+
+    def _organizing(self) -> bool:
+        act = getattr(self, "act_organize", None)
+        return bool(act and act.isChecked())
+
+    def _refresh_organizer(self) -> None:
+        actions = {a.text(): a for a in (*self.page_actions, *self.tool_actions)}
+        self.organizer.set_texts(t("org.title"), t("org.hint"), t("org.done"), t("org.zoom"))
+        self._act_grid_extract = self._act(t("org.extract"), self.split_selected, icon="file-output")
+        self.organizer.set_actions([*(actions.get(t(k)) for k in (
+            "pages.rotate_left", "pages.rotate_right", "pages.delete", "pages.insert_blank")),
+            self._act_grid_extract])
+
+    def _set_organizing(self, on: bool) -> None:
+        """สลับพื้นที่เอกสาร <-> ตารางจัดเรียงหน้า (แถบภาพย่อซ่อนระหว่างนั้น เพราะซ้ำกัน)"""
+        if on and not (self.doc and self.doc.page_count):
+            self.act_organize.setChecked(False)
+            return
+        if on:
+            self._rebuild_grid(keep=[self.viewer.index])
+            self._thumb_panel.hide()
+            self._doc_stack.setCurrentWidget(self.organizer)
+            self.organizer.grid.setFocus()
+            self.statusBar().showMessage(t("org.hint"), 8000)
+        else:
+            rows = self.organizer.grid.selected_rows()
+            self._doc_stack.setCurrentWidget(self.viewer if self.doc else self.home)
+            self._update_thumb_panel()
+            if self.doc and self.doc.page_count:
+                self.goto_page(rows[0] if rows else self.viewer.index)
+
+    def _rebuild_grid(self, keep: list[int] | None = None) -> None:
+        """วาดภาพทุกหน้าลงตาราง (ขนาดตามแถบปรับขนาด) — keep = แถวที่จะเลือกไว้"""
+        if not self.doc:
+            return
+        grid = self.organizer.grid
+        selected = keep if keep is not None else grid.selected_rows()
+        selected = [r for r in selected if r is not None and 0 <= r < self.doc.page_count]
+        target = self.organizer.page_width()
+        pixmaps = []
+        for i in range(self.doc.page_count):
+            page_w = self.doc.doc.load_page(i).rect.width or 595
+            zoom = max(0.05, min(2.0, target / page_w))
+            pixmaps.append(QPixmap.fromImage(pixmap_to_qimage(self.doc.render_page(i, zoom))))
+        grid.set_pages(pixmaps, t("thumb.page"), selected or [self.viewer.index])
+
+    def _on_grid_reordered(self, order: list) -> None:
+        """ลากสลับหน้าในตาราง — เรียงในเอกสารจริง แล้วเลือกหน้าที่ลากไว้ต่อ"""
+        if not self.doc or len(order) != self.doc.page_count:
+            return
+        moved = self.organizer.grid.selected_rows()
+        try:
+            self.doc.reorder_pages(order)
+        except ValueError:
+            return
+        self._refresh_all(keep_row=moved[0] if moved else 0)
+        self.organizer.grid.clearSelection()
+        for row in moved:
+            self.organizer.grid.item(row).setSelected(True)
+        self.statusBar().showMessage("ย้ายลำดับหน้าแล้ว — อย่าลืมบันทึก", 5000)
+
+    def _open_page_from_grid(self, row: int) -> None:
+        """ดับเบิลคลิกหน้าในตาราง = กลับไปดูหน้านั้นในโหมดเอกสาร"""
+        self.organizer.grid.clearSelection()
+        self.organizer.grid.item(row).setSelected(True)
+        self.act_organize.setChecked(False)
+
+    def _grid_context_menu(self, pos) -> None:
+        grid = self.organizer.grid
+        clicked = grid.itemAt(pos)
+        if clicked is not None and not clicked.isSelected():
+            grid.clearSelection()
+            clicked.setSelected(True)
+        menu = self.build_page_menu()
+        if menu:
+            menu.exec(grid.viewport().mapToGlobal(pos))
 
     def _refresh_home(self) -> None:
         """ข้อความ/ปุ่มงานหลักของหน้าแรก (สร้างใหม่ตอนเปลี่ยนภาษา)"""
@@ -1259,12 +1393,18 @@ class MainWindow(QMainWindow):
 
     def _rebuild_ui(self) -> None:
         """สร้างแถบเครื่องมือ + เมนูใหม่ (เปลี่ยนภาษา / ธีม — ข้อความและสีไอคอนเปลี่ยน)"""
+        organizing = self._organizing()     # ปุ่มจัดเรียงหน้าถูกสร้างใหม่ — คงโหมดตารางไว้
         self.removeToolBar(self._toolbar)
         self._toolbar.setParent(None)   # ตัดขาดทันที ไม่รอ deleteLater ไม่งั้นแถบเก่าค้าง
         self._toolbar.deleteLater()
         self._build_toolbars()
         self._build_menu()
         self._retranslate()
+        if organizing:
+            self.act_organize.blockSignals(True)
+            self.act_organize.setChecked(True)
+            self.act_organize.blockSignals(False)
+            self._rebuild_grid()         # ข้อความใต้ภาพเปลี่ยนภาษาตาม
         self._update_state()
 
     def change_language(self, code: str) -> None:
@@ -1504,6 +1644,7 @@ class MainWindow(QMainWindow):
         name = self.doc.path.name if (self.doc and self.doc.path) else t("title.no_file")
         mark = " *" if (self.doc and self.doc.dirty) else ""
         self.setWindowTitle(f"{APP_NAME} {APP_VERSION} — {name}{mark}")
+        self._update_tab_titles()
 
     def _thumb_width(self) -> int:
         """ความกว้างเป้าหมายของภาพย่อ (พิกเซล) — โตตามความกว้างแผงที่ผู้ใช้ลาก"""
@@ -1556,12 +1697,17 @@ class MainWindow(QMainWindow):
         self.viewer.refresh()
         self._update_thumb_panel()
         self._rebuild_thumbs(keep_row)
+        if self._organizing():
+            self._rebuild_grid(keep=[keep_row] if keep_row is not None else None)
         self._update_text_panel()
         if self._bookmark_panel.isVisible():
             self._refresh_bookmarks()
         self._update_state()
 
     def _selected_rows(self) -> list[int]:
+        if self._organizing():
+            rows = self.organizer.grid.selected_rows()
+            return rows or ([self.viewer.index] if self.doc and self.doc.page_count else [])
         rows = sorted(i.row() for i in self.thumbs.selectedIndexes())
         return rows or ([self.viewer.index] if self.doc and self.doc.page_count else [])
 
@@ -1598,7 +1744,12 @@ class MainWindow(QMainWindow):
         clicked = self.thumbs.itemAt(pos)
         if clicked is not None and not clicked.isSelected():
             self.thumbs.setCurrentItem(clicked)  # คลิกขวานอกหน้าที่เลือก -> สลับมาหน้านั้น
+        return self.build_page_menu()
 
+    def build_page_menu(self) -> QMenu | None:
+        """เมนูคำสั่งกับหน้าที่เลือก (ใช้ทั้งแถบภาพย่อและตารางจัดเรียงหน้า)"""
+        if not self.doc or not self.doc.page_count:
+            return None
         rows = self._selected_rows()
         if not rows:
             return None
@@ -1768,7 +1919,8 @@ class MainWindow(QMainWindow):
 
     def _update_thumb_panel(self) -> None:
         """แผงภาพย่อแสดงเฉพาะไฟล์ที่มีมากกว่า 1 หน้า (หน้าเดียวไม่มีอะไรให้เลือก/สลับ)"""
-        want = bool(self.doc and self.doc.page_count > 1)
+        # จัดเรียงหน้าแบบตาราง = ภาพหน้าอยู่ตรงกลางแล้ว ไม่ต้องมีแถบภาพย่อซ้ำ
+        want = bool(self.doc and self.doc.page_count > 1) and not self._organizing()
         if want == self._thumb_panel.isVisible():
             return
         self._thumb_panel.setVisible(want)
@@ -1786,6 +1938,120 @@ class MainWindow(QMainWindow):
             self.text_panel.setPlainText(self.doc.page_text(self.viewer.index))
 
     # ---------------- เปิด / บันทึก / พิมพ์ ----------------
+
+    # ---------------- แท็บ (2.1) ----------------
+
+    def _tab_of_path(self, path) -> int | None:
+        try:
+            want = os.path.normcase(str(Path(path).resolve()))
+        except OSError:
+            return None
+        for i, tab in enumerate(self._tabs):
+            p = tab["doc"].path
+            if p and os.path.normcase(str(Path(p).resolve())) == want:
+                return i
+        return None
+
+    def _add_tab(self, doc) -> None:
+        """เพิ่มเอกสารเป็นแท็บใหม่ต่อท้าย แล้วสลับไปแท็บนั้น"""
+        self._doc_session(doc)
+        self._tabs.append({"doc": doc, "index": 0, "zoom": None, "scroll": 0})
+        self.tab_bar.blockSignals(True)
+        i = self.tab_bar.addTab("")
+        self.tab_bar.blockSignals(False)
+        self.tab_bar.show()
+        self._update_tab_titles()
+        if self.tab_bar.currentIndex() == i:
+            self._on_tab_changed(i)
+        else:
+            self.tab_bar.setCurrentIndex(i)
+
+    def _update_tab_titles(self) -> None:
+        for i, tab in enumerate(self._tabs):
+            doc = tab["doc"]
+            name = doc.path.name if doc.path else t("title.no_file")
+            self.tab_bar.setTabText(i, name + (" *" if doc.dirty else ""))
+            self.tab_bar.setTabToolTip(i, str(doc.path) if doc.path else name)
+
+    def _leave_modes(self) -> None:
+        """ออกจากโหมดแก้ไขที่ค้างอยู่ก่อนสลับ/ปิดแท็บ (วางรูป, ไฮไลต์, ยางลบ, วาด, เลือกชิ้น)"""
+        if self.viewer.placing:
+            self.cancel_placement(quiet=True)
+        if getattr(self.viewer, "_picking_point", False):
+            self.viewer.stop_point_pick()
+        if self.viewer._highlighting:
+            self._end_highlight_mode()
+        if self.viewer._erasing:
+            self._end_erase_mode()
+        if self.viewer._annotating:
+            self._end_annot_mode()
+        self.deselect_stamp()
+        self.deselect_textbox()
+
+    def _remember_view(self) -> None:
+        """จำหน้า/ซูม/ตำแหน่งเลื่อนของแท็บปัจจุบัน ไว้กลับมาที่เดิม"""
+        for tab in self._tabs:
+            if tab["doc"] is self.doc:
+                tab["index"] = self.viewer.index
+                tab["zoom"] = self.viewer.zoom
+                tab["scroll"] = self.viewer.verticalScrollBar().value()
+
+    def _on_tab_changed(self, i: int) -> None:
+        if not (0 <= i < len(self._tabs)):
+            return
+        tab = self._tabs[i]
+        if tab["doc"] is self.doc:
+            return
+        self._leave_modes()
+        self._remember_view()
+        self.doc = tab["doc"]
+        self.viewer.set_document(self.doc)
+        if tab["zoom"]:
+            self.viewer.set_zoom(tab["zoom"])
+        self._refresh_all(keep_row=tab["index"])
+        if tab["zoom"]:
+            scroll = tab["scroll"]
+            QTimer.singleShot(0, lambda: self.viewer.verticalScrollBar().setValue(scroll))
+        else:
+            self.viewer.fit_width()     # เพิ่งเปิด
+
+    def _on_tab_moved(self, src: int, dst: int) -> None:
+        self._tabs.insert(dst, self._tabs.pop(src))
+
+    def close_tab(self, i: int | None = None) -> bool:
+        """ปิดแท็บ (ยังไม่บันทึกถามก่อน) — ปิดแท็บสุดท้ายแล้วกลับหน้าแรก"""
+        if not isinstance(i, int) or isinstance(i, bool):
+            i = self.tab_bar.currentIndex()
+        if not (0 <= i < len(self._tabs)):
+            return False
+        doc = self._tabs[i]["doc"]
+        if doc.dirty:
+            self.tab_bar.setCurrentIndex(i)      # ให้เห็นก่อนว่ากำลังจะปิดไฟล์ไหน
+            if not self._confirm_discard():
+                return False
+        self._leave_modes()
+        self._clear_autosave(doc)
+        self._tabs.pop(i)
+        if doc is self.doc:
+            self.doc = None
+            self.viewer.set_document(None)   # ห้ามให้หน้าจอยังถือเอกสารที่กำลังจะปิด
+        self.tab_bar.blockSignals(True)
+        self.tab_bar.removeTab(i)
+        self.tab_bar.blockSignals(False)
+        doc.close()
+        if self._tabs:
+            nxt = min(i, len(self._tabs) - 1)
+            self.tab_bar.setCurrentIndex(nxt)
+            self._on_tab_changed(nxt)
+        else:
+            self.tab_bar.hide()
+            self.viewer.set_document(None)
+            self._refresh_all()
+        return True
+
+    def next_tab(self, step: int = 1) -> None:
+        if len(self._tabs) > 1:
+            self.tab_bar.setCurrentIndex((self.tab_bar.currentIndex() + step) % len(self._tabs))
 
     def _confirm_discard(self) -> bool:
         """ถามก่อนทิ้งงานที่ยังไม่ได้บันทึก — คืน True ถ้าไปต่อได้"""
@@ -1822,21 +2088,13 @@ class MainWindow(QMainWindow):
                 return None
 
     def open_file(self) -> None:
-        if not self._confirm_discard():
-            return
-        path, _ = QFileDialog.getOpenFileName(self, "เปิดไฟล์ PDF", "", PDF_FILTER)
-        if not path:
-            return
-        new_doc = self._open_document(path)
-        if new_doc is None:
-            return
-        if self.doc:
-            self.doc.close()
-        self.doc = new_doc
-        self.viewer.set_document(new_doc)
-        self._refresh_all(keep_row=0)
-        self.viewer.fit_width()
-        self.statusBar().showMessage(f"เปิด {Path(path).name} ({new_doc.page_count} หน้า)", 5000)
+        """เปิดไฟล์ (เลือกได้หลายไฟล์) — แต่ละไฟล์เป็นแท็บ"""
+        paths, _ = QFileDialog.getOpenFileNames(self, "เปิดไฟล์ PDF", "", PDF_FILTER)
+        for path in paths:
+            self._open_path(path)
+        if self.doc and paths:
+            self.statusBar().showMessage(
+                f"เปิด {Path(paths[-1]).name} ({self.doc.page_count} หน้า)", 5000)
 
     def save_file(self) -> bool:
         if not self.doc:
@@ -2817,17 +3075,15 @@ class MainWindow(QMainWindow):
             self._open_path(target)
 
     def _open_path(self, path: str) -> None:
-        if not self._confirm_discard():
+        """เปิดไฟล์เป็นแท็บใหม่ (เปิดอยู่แล้วก็สลับไปแท็บนั้น)"""
+        open_at = self._tab_of_path(path)
+        if open_at is not None:
+            self.tab_bar.setCurrentIndex(open_at)
             return
         new_doc = self._open_document(path)
         if new_doc is None:
             return
-        if self.doc:
-            self.doc.close()
-        self.doc = new_doc
-        self.viewer.set_document(new_doc)
-        self._refresh_all(keep_row=0)
-        self.viewer.fit_width()
+        self._add_tab(new_doc)
         if new_doc.path:
             recent.add(new_doc.path)
         # ไฟล์เสียแล้วโปรแกรมซ่อมให้ — บอกผู้ใช้ว่าต้องกดบันทึกเพื่อเก็บผลการซ่อม
@@ -4371,7 +4627,8 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
 
     def dropEvent(self, event) -> None:
-        """ปล่อยไฟล์นอกแถบหน้าย่อ — PDF: ยังไม่เปิดไฟล์ก็เปิดให้, เปิดอยู่แล้วก็ต่อท้าย
+        """ปล่อยไฟล์นอกแถบหน้าย่อ — PDF: ยังไม่เปิดไฟล์ก็เปิดเป็นแท็บ, เปิดอยู่แล้วถามว่า
+        เปิดเป็นแท็บใหม่ / ต่อท้ายไฟล์นี้ / แทรกไว้บนสุด
         รูปภาพ: วางลงหน้าตรงจุดที่ปล่อย แล้วลากย้าย/ย่อขยายต่อได้ก่อนยืนยัน"""
         images = image_paths_from_mime(event.mimeData())
         if images and self.doc and self.doc.page_count:
@@ -4382,22 +4639,45 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         event.acceptProposedAction()
-        at = self.doc.page_count if self.doc else 0
-        self._on_pdfs_dropped(paths, at)
+        # ถามหลังการลากจบ — ถ้าเปิดกล่องถามระหว่าง drop, Explorer ที่เป็นต้นทางจะค้างรอ
+        QTimer.singleShot(0, lambda: self._handle_pdf_drop(paths))
+
+    def _handle_pdf_drop(self, paths: list[str]) -> None:
+        if not self.doc or not self.doc.page_count:
+            self._on_pdfs_dropped(paths, 0)
+            return
+        choice = self._ask_pdf_drop(paths)
+        if choice == "tab":
+            for path in paths:
+                self._open_path(path)
+        elif choice == "end":
+            self._on_pdfs_dropped(paths, self.doc.page_count)
+        elif choice == "top":
+            self._on_pdfs_dropped(paths, 0)
+
+    def _ask_pdf_drop(self, paths: list[str]) -> str | None:
+        """ลากไฟล์ PDF มาปล่อยตอนเปิดไฟล์อยู่ — ให้เลือกว่าจะทำอะไร (None = ยกเลิก)"""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle(t("drop.title"))
+        name = Path(paths[0]).name if len(paths) == 1 else t("drop.files", n=len(paths))
+        current = self.doc.path.name if self.doc.path else t("title.no_file")
+        box.setText(t("drop.ask", name=name, current=current))
+        tab = box.addButton(t("drop.tab"), QMessageBox.AcceptRole)
+        end = box.addButton(t("drop.end"), QMessageBox.AcceptRole)
+        top = box.addButton(t("drop.top"), QMessageBox.AcceptRole)
+        box.addButton(t("bar.cancel"), QMessageBox.RejectRole)
+        box.setDefaultButton(tab)
+        box.exec()
+        return {tab: "tab", end: "end", top: "top"}.get(box.clickedButton())
 
     def _on_pdfs_dropped(self, paths: list[str], at: int) -> None:
         if not paths:
             return
-        # ยังไม่ได้เปิดไฟล์ -> เปิดไฟล์แรก ที่เหลือแทรกต่อท้าย
+        # ยังไม่ได้เปิดไฟล์ -> เปิดทุกไฟล์เป็นแท็บ
         if not self.doc or not self.doc.page_count:
-            self._open_path(paths[0])
-            if len(paths) > 1 and self.doc:
-                try:
-                    self.doc.insert_pdfs(self.doc.page_count, paths[1:])
-                except Exception as exc:
-                    QMessageBox.critical(self, t("ins.failed"), str(exc))
-                    return
-                self._refresh_all(keep_row=0)
+            for path in paths:
+                self._open_path(path)
             return
 
         at = max(0, min(at, self.doc.page_count))
@@ -4431,11 +4711,20 @@ class MainWindow(QMainWindow):
         _force_foreground(self)
 
     def closeEvent(self, event) -> None:
-        if self._confirm_discard():
-            self._clear_autosave()   # ปิดปกติ (เลือกทิ้ง/บันทึกแล้ว) ไม่ต้องเก็บงานค้าง
-            event.accept()
-        else:
-            event.ignore()
+        # ถามทีละแท็บที่ยังไม่บันทึก (สลับไปให้เห็นก่อนว่าไฟล์ไหน) — กดยกเลิกที่ไหน = ไม่ปิด
+        for i in range(len(self._tabs)):
+            if self._tabs[i]["doc"].dirty:
+                self.tab_bar.setCurrentIndex(i)
+                if not self._confirm_discard():
+                    event.ignore()
+                    return
+        if self.doc is not None and all(tab["doc"] is not self.doc for tab in self._tabs):
+            if not self._confirm_discard():     # เอกสารที่ไม่ได้อยู่ในแท็บ (กันพลาด)
+                event.ignore()
+                return
+        for doc in self._all_docs():
+            self._clear_autosave(doc)   # ปิดปกติ ไม่ต้องเก็บงานค้าง
+        event.accept()
 
 
 
@@ -4642,8 +4931,9 @@ def _attach_combine_handler(server, window) -> None:
         on_connection()
 
 
-def _notify_running_instance() -> bool:
-    """ถ้ามีโปรแกรมเปิดอยู่แล้ว บอกให้มันเด้งขึ้นมาหน้าสุด แล้วคืน True (ตัวใหม่ควรออก)"""
+def _notify_running_instance(path: str | None = None) -> bool:
+    """ถ้ามีโปรแกรมเปิดอยู่แล้ว บอกให้มันเด้งขึ้นมาหน้าสุด (และเปิด path เป็นแท็บใหม่)
+    แล้วคืน True (ตัวใหม่ควรออก)"""
     from PySide6.QtNetwork import QLocalSocket
     sock = QLocalSocket()
     sock.connectToServer(_SINGLE_INSTANCE_KEY)
@@ -4656,12 +4946,18 @@ def _notify_running_instance() -> bool:
                 ctypes.windll.user32.AllowSetForegroundWindow(-1)   # ASFW_ANY
             except Exception:
                 pass
-        sock.write(b"RAISE")
+        sock.write(b"OPEN\n" + str(Path(path).resolve()).encode("utf-8") if path else b"RAISE")
         sock.flush()
-        sock.waitForBytesWritten(400)
-        sock.disconnectFromServer()
+        sock.waitForBytesWritten(1000)
+        # ไม่ตัดสายเอง: ถ้าตัดก่อนตัวที่เปิดอยู่อ่าน ข้อความ (path) หายระหว่างทาง
+        # ให้ฝั่งนั้นอ่านเสร็จแล้วตัดเอง (รอได้ไม่เกิน 3 วินาที แล้วโปรเซสนี้ก็ปิดตัวไปอยู่ดี)
+        sock.waitForDisconnected(3000)
+        _sent_sockets.append(sock)     # กันถูกเก็บขยะ (= ตัดสาย) ก่อนอีกฝั่งอ่านทัน
         return True
     return False
+
+
+_sent_sockets: list = []
 
 
 def _listen_single_instance(window) -> object:
@@ -4674,10 +4970,16 @@ def _listen_single_instance(window) -> object:
     def on_connection():
         conn = server.nextPendingConnection()
         if conn:
-            conn.waitForReadyRead(200)
-            conn.readAll()
-            window.bring_to_front()
+            data = b""
+            while conn.waitForReadyRead(200):      # path ยาวอาจมาไม่ครบในก้อนเดียว
+                data += bytes(conn.readAll())
+            data += bytes(conn.readAll())
             conn.disconnectFromServer()
+            if data.startswith(b"OPEN\n"):
+                path = data[5:].decode("utf-8", "replace").strip()
+                if path:
+                    window._open_path(path)        # เปิดเป็นแท็บใหม่ (เปิดอยู่แล้วก็สลับไป)
+            window.bring_to_front()
 
     server.newConnection.connect(on_connection)
     return server   # ต้องเก็บ reference ไว้ ไม่งั้นถูกเก็บขยะ
@@ -4735,9 +5037,9 @@ def main() -> None:
             errorlog.log_info("combine: ส่งไม่สำเร็จ เปิดหน้าต่างเอง")
             # ส่งไม่สำเร็จเลย — เปิดหน้าต่างของตัวเองไปเลย ดีกว่าเงียบหาย
 
-    # กันเผลอเปิดโปรแกรมซ้ำ (เปิดช้าแล้วดับเบิลคลิกอีกที) — เฉพาะตอนเปิดโปรแกรมเปล่า
-    # ถ้าเปิดจากไฟล์ .pdf (association) หรือสั่งรวมไฟล์ ยังให้เปิดหน้าต่างใหม่ได้ตามเดิม
-    if initial is None and not combine and _notify_running_instance():
+    # มีโปรแกรมเปิดอยู่แล้ว: เปิดโปรแกรมเปล่า = เด้งตัวเดิมขึ้นมา, เปิดไฟล์ .pdf (ดับเบิลคลิก /
+    # ไฟล์แนบ Outlook) = ส่งให้ตัวเดิมเปิดเป็นแท็บใหม่ (2.1) · สั่งรวมไฟล์ยังแยกหน้าต่างตามเดิม
+    if not combine and _notify_running_instance(initial):
         _close_splash()
         return   # มีหน้าต่างเปิดอยู่แล้ว เด้งตัวนั้นขึ้นมาแทน
 
@@ -4765,6 +5067,7 @@ def main() -> None:
         QTimer.singleShot(0, lambda: window.merge_dialog(preset_files=sorted(files)))
     elif initial:
         window._open_path(initial)
+        server = _listen_single_instance(window)   # ไฟล์ที่เปิดตามมาจะมาเป็นแท็บในหน้าต่างนี้
     else:
         server = _listen_single_instance(window)   # เก็บ ref กัน GC
         # ไม่ได้เปิดไฟล์เจาะจง — เช็คว่ามีงานค้างจากครั้งก่อนให้กู้ไหม

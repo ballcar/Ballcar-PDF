@@ -64,7 +64,7 @@ print("OK  บันทึกแล้วได้ไฟล์ที่เปิ
 # ---- ผ่าน UI: ถามรหัสแล้วเปิด ----
 app = QApplication(sys.argv)
 w = MainWindow()
-with patch("app.main.QFileDialog.getOpenFileName", return_value=(str(esrc), "")), \
+with patch("app.main.QFileDialog.getOpenFileNames", return_value=([str(esrc)], "")), \
      patch("app.main.QInputDialog.getText", return_value=("secret", True)):
     w.open_file()
 assert w.doc is not None and w.doc.page_count == 1
@@ -74,7 +74,7 @@ print("OK  UI ถามรหัสแล้วเปิดไฟล์ได้
 # ---- UI: ใส่รหัสผิดแล้วถูก (loop) ----
 w = MainWindow()
 attempts = iter([("bad", True), ("secret", True)])
-with patch("app.main.QFileDialog.getOpenFileName", return_value=(str(esrc), "")), \
+with patch("app.main.QFileDialog.getOpenFileNames", return_value=([str(esrc)], "")), \
      patch("app.main.QInputDialog.getText", side_effect=lambda *a, **k: next(attempts)):
     w.open_file()
 assert w.doc is not None and w.doc.page_count == 1
@@ -83,7 +83,7 @@ print("OK  UI ใส่รหัสผิดแล้วลองใหม่จ
 # ---- UI: กดยกเลิกตอนถามรหัส -> ไม่เปิด ----
 w = MainWindow()
 before = w.doc
-with patch("app.main.QFileDialog.getOpenFileName", return_value=(str(esrc), "")), \
+with patch("app.main.QFileDialog.getOpenFileNames", return_value=([str(esrc)], "")), \
      patch("app.main.QInputDialog.getText", return_value=("", False)):
     w.open_file()
 assert w.doc is before, "กดยกเลิกต้องไม่เปลี่ยนเอกสาร"

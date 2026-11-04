@@ -111,10 +111,31 @@ w.dragEnterEvent(enter)
 assert enter.isAccepted(), "หน้าต่างต้องรับการลากไฟล์"
 drop_win = QDropEvent(QPointF(600, 400), Qt.CopyAction, m_win,
                       Qt.LeftButton, Qt.NoModifier)
-w.dropEvent(drop_win)
-app.processEvents()
+from unittest.mock import patch as _patch
+asked = []
+with _patch.object(MainWindow, "_ask_pdf_drop", lambda self, paths: asked.append(paths) or "end"):
+    w.dropEvent(drop_win)
+    app.processEvents()
+assert asked, "เปิดไฟล์อยู่ ปล่อย PDF บนหน้าต่างต้องถามก่อน"
 assert w.doc.page_count == 7, f"4+3 = 7 ได้ {w.doc.page_count}"
-print("OK  ปล่อยที่หน้าเอกสาร -> ต่อท้าย")
+print("OK  ปล่อยที่หน้าเอกสาร -> ถามก่อน เลือกต่อท้าย = ต่อท้าย")
+
+# เลือก "แทรกไว้บนสุด" / "เปิดเป็นแท็บใหม่" / ยกเลิก
+w = fresh()
+with _patch.object(MainWindow, "_ask_pdf_drop", lambda self, paths: "top"):
+    w._handle_pdf_drop([str(add2)])
+assert w.doc.page_count == 7 and "ADD2-p1" in w.doc.page_text(0), "บนสุด = แทรกเป็นหน้าแรก"
+w = fresh()
+with _patch.object(MainWindow, "_ask_pdf_drop", lambda self, paths: None):
+    w._handle_pdf_drop([str(add2)])
+assert w.doc.page_count == 4, "ยกเลิก = ไม่เปลี่ยนอะไร"
+w = MainWindow(); w.show(); app.processEvents()
+w._open_path(str(base)); app.processEvents()
+with _patch.object(MainWindow, "_ask_pdf_drop", lambda self, paths: "tab"):
+    w._handle_pdf_drop([str(add2)])
+assert w.tab_bar.count() == 2 and w.doc.page_count == 3, "แท็บใหม่ = เปิดไฟล์ที่ลากมาแยก"
+assert w._tabs[0]["doc"].page_count == 4, "ไฟล์เดิมต้องไม่ถูกแก้"
+print("OK  เลือกแทรกไว้บนสุด / เปิดเป็นแท็บใหม่ / ยกเลิก ทำงานตามที่เลือก")
 
 # ---- ยังไม่เปิดไฟล์ -> ลากมาแล้วเปิดให้เลย ----
 w = MainWindow(); w.doc = None; w.show(); app.processEvents()
@@ -122,11 +143,11 @@ w._on_pdfs_dropped([str(add1)], 0)
 assert w.doc is not None and w.doc.page_count == 2, "ต้องเปิดไฟล์ที่ลากมา"
 print("OK  ยังไม่เปิดไฟล์ ลากมาแล้วเปิดให้เลย")
 
-# ยังไม่เปิดไฟล์ + ลากหลายไฟล์ -> เปิดไฟล์แรก ที่เหลือต่อท้าย
+# ยังไม่เปิดไฟล์ + ลากหลายไฟล์ -> เปิดทุกไฟล์เป็นแท็บ (2.1)
 w = MainWindow(); w.doc = None; w.show(); app.processEvents()
 w._on_pdfs_dropped([str(add1), str(add2)], 0)
-assert w.doc.page_count == 5, f"2+3 = 5 ได้ {w.doc.page_count}"
-print("OK  ยังไม่เปิดไฟล์ + หลายไฟล์ -> เปิดตัวแรก ที่เหลือต่อท้าย")
+assert w.tab_bar.count() == 2 and w.doc.page_count == 3, (w.tab_bar.count(), w.doc.page_count)
+print("OK  ยังไม่เปิดไฟล์ + หลายไฟล์ -> เปิดทุกไฟล์เป็นแท็บ")
 
 # ---- ลากไฟล์ที่ไม่ใช่ PDF -> ไม่รับ ไม่เปลี่ยนอะไร ----
 w = fresh()
