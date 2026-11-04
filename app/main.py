@@ -153,6 +153,21 @@ def pdf_paths_from_mime(mime) -> list[str]:
     return paths
 
 
+IMAGE_EXTS = (".png", ".gif", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff")
+
+
+def image_paths_from_mime(mime) -> list[str]:
+    """ไฟล์รูปที่ลากมาจากภายนอก (Explorer) — ใช้วางรูปลงหน้า PDF"""
+    if not mime or not getattr(mime, "hasUrls", None) or not mime.hasUrls():
+        return []
+    paths = []
+    for url in mime.urls():
+        local = url.toLocalFile()
+        if local.lower().endswith(IMAGE_EXTS) and Path(local).exists():
+            paths.append(str(Path(local)))
+    return paths
+
+
 TEXT_HISTORY_KEY = "text_history"
 TEXT_HISTORY_MAX = 40
 
@@ -3033,13 +3048,27 @@ class MainWindow(QMainWindow):
             return
         self._start_image_placement(
             path,
-            "ลากตรงกลางเพื่อย้าย · ลากมุมเพื่อย่อ/ขยาย · Enter หรือดับเบิลคลิก = ยืนยัน · Esc = ยกเลิก")
+            t("img.placing"))
 
-    def _start_image_placement(self, path: str, hint: str) -> None:
+    def _drop_image(self, path: str, window_pt) -> None:
+        """ลากไฟล์รูปจาก Explorer มาปล่อยบนหน้า — เหมือน "แทรกรูปภาพ" แต่วางตรงจุดที่ปล่อย"""
+        try:
+            path = PdfDocument.prepare_image(path, remove_background=False)
+        except Exception as exc:
+            QMessageBox.critical(self, t("img.failed"), str(exc))
+            return
+        viewport = self.viewer.viewport()
+        local = viewport.mapFrom(self, window_pt)
+        at = None
+        if viewport.rect().contains(local):      # ปล่อยบนพื้นที่เอกสาร -> วางตรงนั้น
+            at = self.viewer._label.mapFrom(viewport, local)
+        self._start_image_placement(path, t("img.placing"), at=at)
+
+    def _start_image_placement(self, path: str, hint: str, at=None) -> None:
         """เข้าโหมดวางรูป (ใช้ร่วมกันทั้งลายเซ็นและรูปภาพทั่วไป)"""
         self.deselect_stamp()
         self._pending_image = path
-        self.viewer.start_placing(path)
+        self.viewer.start_placing(path, at=at)
         self.viewer.overlay.committed.connect(self.commit_placement)
         self._placing_bar.show()
         self.statusBar().showMessage(hint, 0)
@@ -3242,7 +3271,11 @@ class MainWindow(QMainWindow):
     def assistant_dialog(self) -> None:
         if not self.doc or not self.doc.page_count:
             return
-        dialog = assistant_ui.AssistantDialog(self, assistant_history(), ai_ready=assistant.has_matcher())
+        # AI จับความหมายโหลดตอนเปิดผู้ช่วยครั้งแรก (ไม่ใช่ตอนเปิดโปรแกรม — กินหน่วยความจำหลายร้อย MB)
+        # ระหว่างโหลดสั่งงานด้วยกฎได้เลย พอเสร็จหน้าต่างเปลี่ยนเป็นโหมด AI เอง
+        semantic.load_in_background()
+        dialog = assistant_ui.AssistantDialog(self, assistant_history(), ai_ready=assistant.has_matcher(),
+                                              ai_loading=semantic.loading())
         if dialog.exec() != QDialog.Accepted or not dialog.command:
             return
         # เห็นตัวอย่างว่าจะทำอะไรในหน้าต่างแล้ว -> ไม่ถามยืนยันซ้ำ
@@ -4324,16 +4357,27 @@ class MainWindow(QMainWindow):
 
     # ---------------- ลากไฟล์ PDF จาก Explorer มาปล่อย ----------------
 
+    def _accepts_drop(self, mime) -> bool:
+        # รูปภาพวางลงหน้าได้เมื่อเปิดไฟล์อยู่
+        return bool(pdf_paths_from_mime(mime) or
+                    (self.doc and self.doc.page_count and image_paths_from_mime(mime)))
+
     def dragEnterEvent(self, event) -> None:
-        if pdf_paths_from_mime(event.mimeData()):
+        if self._accepts_drop(event.mimeData()):
             event.acceptProposedAction()
 
     def dragMoveEvent(self, event) -> None:
-        if pdf_paths_from_mime(event.mimeData()):
+        if self._accepts_drop(event.mimeData()):
             event.acceptProposedAction()
 
     def dropEvent(self, event) -> None:
-        """ปล่อยไฟล์นอกแถบหน้าย่อ — ยังไม่เปิดไฟล์ก็เปิดให้, เปิดอยู่แล้วก็ต่อท้าย"""
+        """ปล่อยไฟล์นอกแถบหน้าย่อ — PDF: ยังไม่เปิดไฟล์ก็เปิดให้, เปิดอยู่แล้วก็ต่อท้าย
+        รูปภาพ: วางลงหน้าตรงจุดที่ปล่อย แล้วลากย้าย/ย่อขยายต่อได้ก่อนยืนยัน"""
+        images = image_paths_from_mime(event.mimeData())
+        if images and self.doc and self.doc.page_count:
+            event.acceptProposedAction()
+            self._drop_image(images[0], event.position().toPoint())
+            return
         paths = pdf_paths_from_mime(event.mimeData())
         if not paths:
             return
@@ -4698,8 +4742,6 @@ def main() -> None:
         return   # มีหน้าต่างเปิดอยู่แล้ว เด้งตัวนั้นขึ้นมาแทน
 
     window = MainWindow()
-    # AI จับความหมายของผู้ช่วย — โหลดเบื้องหลัง ไม่ทำให้เปิดโปรแกรมช้า (ไม่มีไฟล์โมเดลก็ข้าม)
-    semantic.load_in_background()
     # ตั้งเป็น "ตาม Windows" แล้วผู้ใช้สลับโหมดมืด/สว่างของ Windows — เปลี่ยนตามทันที
     # (ไอคอนต้องเปลี่ยนสีตามด้วย ไม่ใช่แค่พื้นหลัง จึงผ่าน change_theme)
     app.styleHints().colorSchemeChanged.connect(

@@ -54,7 +54,7 @@ class _FlowRow(QWidget):
 
 class AssistantDialog(QDialog):
     def __init__(self, parent=None, history: list[str] | None = None,
-                 ai_ready: bool = False) -> None:
+                 ai_ready: bool = False, ai_loading: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle(t("ai.title"))
         self.setMinimumWidth(560)
@@ -63,9 +63,16 @@ class AssistantDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
-        engine = QLabel(t("ai.engine_ai") if ai_ready else t("ai.engine_rules"))
+        engine = self.engine = QLabel(t("ai.engine_ai") if ai_ready else
+                                      t("ai.engine_loading") if ai_loading else t("ai.engine_rules"))
         engine.setProperty("role", "hint")
         layout.addWidget(engine)
+        # AI กำลังโหลดเบื้องหลัง -> คอยดูจนพร้อม แล้วตีความคำที่พิมพ์ไว้ใหม่ด้วย AI
+        self._ai_wait = QTimer(self)
+        self._ai_wait.setInterval(300)
+        self._ai_wait.timeout.connect(self._check_ai)
+        if ai_loading and not ai_ready:
+            self._ai_wait.start()
 
         self.input = QLineEdit()
         self.input.setPlaceholderText(t("ai.placeholder"))
@@ -119,6 +126,16 @@ class AssistantDialog(QDialog):
 
         self._intents = None
         self._update_preview()
+
+    def _check_ai(self) -> None:
+        from . import semantic
+        if assistant.has_matcher():
+            self._ai_wait.stop()
+            self.engine.setText(t("ai.engine_ai"))
+            self._update_preview()
+        elif not semantic.loading():       # โหลดไม่สำเร็จ -> ใช้กฎต่อ
+            self._ai_wait.stop()
+            self.engine.setText(t("ai.engine_rules"))
 
     def _use(self, text: str) -> None:
         """กดคำแนะนำ/ตัวอย่าง -> เติมลงช่อง (แก้ต่อได้ก่อนกดทำเลย)"""

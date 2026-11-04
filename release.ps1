@@ -4,11 +4,13 @@
 #   3) ปล่อยขึ้นเซิร์ฟเวอร์อัปเดต แล้วยืนยันว่าเครื่องลูกเห็นเวอร์ชันใหม่จริง
 #
 # วิธีใช้:  cd D:\Project\PDF  แล้วรัน  .\release.ps1
+#          ขึ้นเวอร์ชันใหญ่: .\release.ps1 -Version 2.0.0  (ปกติเลขเวอร์ชัน +1 ให้เอง)
 #
 # หมายเหตุ: เครื่องนี้เสิร์ฟไฟล์อัปเดตจากโฟลเดอร์รวม D:\Project\_update-server
 # ซึ่งมีทั้ง Ballcar PDF (latest.json) และ Ballcar Diagram (latest.yml) อยู่ด้วยกัน
 # เซิร์ฟเวอร์เปิดค้างไว้อยู่แล้ว สคริปต์นี้จึงแค่วางไฟล์ลงไป ไม่ไปแย่งพอร์ตกับใคร
 
+param([string]$Version = "")
 Set-Location $PSScriptRoot
 $ErrorActionPreference = 'Stop'
 
@@ -25,7 +27,7 @@ function Fail($text) {
 }
 
 Step 1 "build โปรแกรม"
-& (Join-Path $PSScriptRoot 'build-exe.ps1')
+& (Join-Path $PSScriptRoot 'build-exe.ps1') -Version $Version
 if ($LASTEXITCODE -ne 0) { Fail "build โปรแกรมไม่ผ่าน" }
 
 Step 2 "สร้างตัวติดตั้ง"

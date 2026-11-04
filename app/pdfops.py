@@ -1843,7 +1843,10 @@ class PdfDocument:
                 continue
             page = doc.load_page(stamp.page)
             target = stamp.rect * page.derotation_matrix if page.rotation else stamp.rect
-            page.insert_image(target, filename=stamp.image_path, overlay=True, alpha=-1)
+            # keep_proportion=False: ฝังเต็มกรอบเท่าที่เห็นบนจอ (ค่าเริ่มต้นคงสัดส่วนรูปเดิม
+            # แล้วจัดกึ่งกลาง -> รูปที่ถูกยืด/บีบจะเล็กลงและเลื่อนจากที่วางไว้)
+            page.insert_image(target, filename=stamp.image_path, overlay=True, alpha=-1,
+                              keep_proportion=False)
 
     # ---------- ข้อความแบบแก้ไขได้ (เพิ่ม/แก้) ----------
 
@@ -2101,7 +2104,8 @@ class PdfDocument:
         page = self.doc.load_page(index)
         target = rect * page.derotation_matrix if page.rotation else rect
         # alpha=-1 = ใช้ความโปร่งใสที่มากับไฟล์รูป (PNG ลายเซ็นพื้นหลังใสจะไม่มีกรอบขาว)
-        page.insert_image(target, filename=str(image_path), overlay=True, alpha=-1)
+        page.insert_image(target, filename=str(image_path), overlay=True, alpha=-1,
+                          keep_proportion=False)    # เต็มกรอบเท่าที่เห็น (ดู _flatten_stamps)
         self.dirty = True
 
     def add_image_watermark(

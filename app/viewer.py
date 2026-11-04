@@ -104,7 +104,8 @@ class PlacementOverlay(QLabel):
         self._mode: str | None = None       # move / nw / ne / sw / se
         self._grab: QPoint | None = None
         self._start_geo: QRect | None = None
-        self.setToolTip("ลากตรงกลางเพื่อย้าย · ลากมุมเพื่อย่อ/ขยาย\nEnter = ยืนยัน · Esc = ยกเลิก")
+        self.setToolTip("ลากตรงกลางเพื่อย้าย · ลากมุมเพื่อย่อ/ขยาย (กด Shift ค้าง = คงสัดส่วนรูป)\n"
+                        "Enter = ยืนยัน · Esc = ยกเลิก")
 
     def _zone(self, pos: QPoint) -> str:
         near_left = pos.x() <= HANDLE
@@ -153,9 +154,36 @@ class PlacementOverlay(QLabel):
                 geo.setLeft(min(geo.left() + delta.x(), geo.right() - MIN_SIZE))
             if "e" in self._mode:
                 geo.setRight(max(geo.right() + delta.x(), geo.left() + MIN_SIZE))
+            if event.modifiers() & Qt.ShiftModifier:
+                geo = self._keep_ratio(geo)
 
         self.setGeometry(geo)
         event.accept()
+
+    def _keep_ratio(self, geo: QRect) -> QRect:
+        """Shift ค้างตอนลากมุม: ปรับให้กลับเป็นสัดส่วนรูปเดิม โดยยึดมุมตรงข้ามไว้กับที่"""
+        src = self.source
+        if src.isNull() or not src.width() or not src.height():
+            return geo
+        ratio = src.height() / src.width()
+        # ใช้ด้านที่ผู้ใช้ลากไปไกลกว่าเป็นหลัก แล้วคำนวณอีกด้านตามสัดส่วน
+        width, height = geo.width(), geo.height()
+        if height > width * ratio:
+            width = round(height / ratio)
+        else:
+            height = round(width * ratio)
+        width, height = max(MIN_SIZE, width), max(MIN_SIZE, height)
+        fixed = QRect(self._start_geo)
+        out = QRect(geo)
+        if "w" in self._mode:
+            out.setLeft(fixed.right() - width + 1)
+        else:
+            out.setRight(fixed.left() + width - 1)
+        if "n" in self._mode:
+            out.setTop(fixed.bottom() - height + 1)
+        else:
+            out.setBottom(fixed.top() + height - 1)
+        return out
 
     def mouseReleaseEvent(self, event) -> None:
         self._mode = None
@@ -374,11 +402,12 @@ class PageViewer(QScrollArea):
         return QPoint(self.horizontalScrollBar().value() + self.viewport().width() // 2,
                       self.verticalScrollBar().value() + self.viewport().height() // 2)
 
-    def start_placing(self, image_path: str) -> None:
-        """แสดงตัวอย่างรูปกลางพื้นที่มองเห็น ให้ผู้ใช้ลากย้าย/ย่อขยายก่อนยืนยัน"""
+    def start_placing(self, image_path: str, at: QPoint | None = None) -> None:
+        """แสดงตัวอย่างรูปกลางพื้นที่มองเห็น (หรือตรงจุด at บนแคนวาส เช่นจุดที่ลากไฟล์มาปล่อย)
+        ให้ผู้ใช้ลากย้าย/ย่อขยายก่อนยืนยัน"""
         self.cancel_placing()
         overlay = PlacementOverlay(self._label, image_path)
-        center = self._viewport_center_canvas()
+        center = at if at is not None else self._viewport_center_canvas()
         idx, _, _ = self._page_at(center)
         self.index = idx
         g = self._geoms[idx] if self._geoms else QRect(0, 0, self.width(), self.height())

@@ -224,14 +224,32 @@ def load() -> Matcher | None:
         return _matcher
 
 
+_loading = False
+
+
+def loading() -> bool:
+    return _loading
+
+
 def load_in_background(on_ready=None) -> None:
-    """โหลดตอนเปิดโปรแกรมโดยไม่ทำให้หน้าต่างช้า — เสร็จแล้วต่อเข้ากับผู้ช่วยเอง"""
+    """โหลดเบื้องหลังโดยไม่ทำให้หน้าต่างค้าง — เสร็จแล้วต่อเข้ากับผู้ช่วยเอง
+    (เรียกตอนเปิดผู้ช่วยครั้งแรก ไม่ใช่ตอนเปิดโปรแกรม: โมเดลกินหน่วยความจำ ~400-600 MB
+    คนที่ไม่ใช้ผู้ช่วยจึงไม่ต้องเสีย / เรียกซ้ำระหว่างกำลังโหลดไม่เริ่มใหม่)"""
+    global _loading
+    if _loading or _matcher is not None:
+        return
+
     def work():
-        matcher = load()
-        if matcher is not None:
-            from . import assistant
-            assistant.set_matcher(matcher)
-            if on_ready:
-                on_ready()
+        global _loading
+        try:
+            matcher = load()
+            if matcher is not None:
+                from . import assistant
+                assistant.set_matcher(matcher)     # ต่อก่อนบอกว่าโหลดเสร็จ (หน้าต่างผู้ช่วยคอยดูสองค่านี้)
+        finally:
+            _loading = False
+        if matcher is not None and on_ready:
+            on_ready()
     if available():
+        _loading = True
         threading.Thread(target=work, daemon=True).start()

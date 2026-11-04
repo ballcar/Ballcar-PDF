@@ -28,6 +28,28 @@ if not semantic.available():
     print("\nผ่านทั้งหมด")
     sys.exit(0)
 
+# ---- โหลด AI ตอนเปิดผู้ช่วย (เบื้องหลัง): ระหว่างโหลดใช้กฎได้ พอพร้อมหน้าต่างเปลี่ยนเป็นโหมด AI เอง ----
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
+from app import i18n
+from app.assistant_ui import AssistantDialog
+i18n.load_language()
+app = QApplication.instance() or QApplication(sys.argv)
+semantic.load_in_background()
+assert semantic.loading() and not A.has_matcher()
+semantic.load_in_background()          # กดเปิดซ้ำระหว่างโหลด ไม่เริ่มโหลดใหม่
+dlg = AssistantDialog(None, [], ai_ready=False, ai_loading=True)
+assert dlg.engine.text() == i18n.t("ai.engine_loading")
+dlg.input.setText("ไฟล์ใหญ่ ส่งไลน์ไม่ได้")
+for _ in range(300):
+    QTest.qWait(100)
+    if not dlg._ai_wait.isActive():
+        break
+assert A.has_matcher() and not semantic.loading()
+assert dlg.engine.text() == i18n.t("ai.engine_ai")
+assert dlg.run_button.isEnabled(), "พอ AI พร้อม คำที่พิมพ์ค้างไว้ต้องถูกตีความใหม่"
+print("OK  AI โหลดเบื้องหลังตอนเปิดผู้ช่วย พร้อมแล้วหน้าต่างเปลี่ยนเป็นโหมด AI เอง")
+
 m = semantic.load()
 A.set_matcher(m)
 

@@ -2,6 +2,7 @@
 
 กติกา: patch +1 ไปเรื่อยๆ ถึง .99 แล้วปัดขึ้น minor
     1.0.1 -> 1.0.2 -> ... -> 1.0.99 -> 1.1.0 -> 1.1.1 -> ...
+ขึ้นเวอร์ชันใหญ่ (เช่น 2.0.0) ใช้ --set 2.0.0 แทนการ +1
 """
 import json
 import sys
@@ -24,8 +25,12 @@ def next_version(current: str) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
-def bump() -> str:
-    new = next_version(read_version())
+def bump(exact: str | None = None) -> str:
+    if exact:
+        parts = exact.split(".")
+        if len(parts) != 3 or not all(part.isdigit() for part in parts):
+            raise SystemExit(f"เลขเวอร์ชันต้องเป็นแบบ x.y.z ได้ {exact!r}")
+    new = exact or next_version(read_version())
     VERSION_FILE.write_text(
         json.dumps({"version": new}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
@@ -35,5 +40,7 @@ def bump() -> str:
 if __name__ == "__main__":
     if "--show" in sys.argv:
         print(read_version())
+    elif "--set" in sys.argv:
+        print(bump(sys.argv[sys.argv.index("--set") + 1]))
     else:
         print(bump())

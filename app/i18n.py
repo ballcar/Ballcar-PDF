@@ -404,6 +404,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "ai.run": "ทำเลย",
         "ai.engine_rules": "ผู้ช่วยแบบออฟไลน์ (กฎ)",
         "ai.engine_ai": "ผู้ช่วยแบบออฟไลน์ + AI จับความหมาย",
+        "ai.engine_loading": "ผู้ช่วยแบบออฟไลน์ — กำลังโหลด AI จับความหมาย… (สั่งงานได้เลย)",
         "hl.hint": "ลากคลุมข้อความเพื่อไฮไลต์ · คลิกที่ไฮไลต์เพื่อลบ · Esc = ออก",
         "hl.selected": "โหมดไฮไลต์",
         "hl.color": "🎨 เลือกสี",
@@ -489,7 +490,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "tools.insert_image": "แทรกรูปภาพ (ลากย้าย/ย่อขยายได้)…",
         "img.pick": "เลือกไฟล์รูปที่จะแทรก",
         "img.failed": "เปิดไฟล์รูปไม่สำเร็จ",
-        "img.placing": "ลากตรงกลางเพื่อย้าย · ลากมุมเพื่อย่อ/ขยาย · Enter หรือดับเบิลคลิก = ยืนยัน · Esc = ยกเลิก",
+        "img.placing": "ลากตรงกลางเพื่อย้าย · ลากมุมเพื่อย่อ/ขยาย (Shift ค้าง = คงสัดส่วน) · Enter หรือดับเบิลคลิก = ยืนยัน · Esc = ยกเลิก",
 
         # มุมมอง / ช่วยเหลือ
         "view.show_text": "แสดงข้อความในหน้า",
@@ -904,6 +905,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "ai.run": "Run",
         "ai.engine_rules": "Offline assistant (rules)",
         "ai.engine_ai": "Offline assistant + meaning AI",
+        "ai.engine_loading": "Offline assistant — loading meaning AI… (you can type now)",
         "ai.confirm_title": "Confirm Command",
         "ai.will_do": "Will do: {what}\n\nProceed?",
         "ai.done_blank": "Deleted {n} blank page(s)",
@@ -996,7 +998,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "tools.insert_image": "Insert Image (drag / resize)…",
         "img.pick": "Choose an image to insert",
         "img.failed": "Could not open the image",
-        "img.placing": "Drag the middle to move · drag a corner to resize · Enter or double-click = confirm · Esc = cancel",
+        "img.placing": "Drag the middle to move · drag a corner to resize (hold Shift = keep proportions) · Enter or double-click = confirm · Esc = cancel",
 
         "view.show_text": "Show Page Text",
         "view.show_bookmarks": "Show Bookmarks (TOC)",

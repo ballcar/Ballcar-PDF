@@ -2,10 +2,17 @@
 # ใช้ onedir แทน onefile เพราะ onefile ต้องแตก python312.dll ลง %TEMP% ทุกครั้งที่เปิด
 # บนเครื่องลูกมักโดนแอนตี้ไวรัสลบ/ล็อก dll ระหว่างแตก -> "Failed to load Python DLL"
 # onedir ติดตั้งไฟล์ลงเครื่องจริง ไม่ต้องแตก temp -> เสถียรกว่าและเปิดเร็วกว่า
+# -Version 2.0.0 = ตั้งเลขเวอร์ชันตรงๆ (ขึ้นเวอร์ชันใหญ่) แทนการ +1 อัตโนมัติ
+param([string]$Version = "")
 Set-Location $PSScriptRoot
 
 # เพิ่มเลขเวอร์ชันก่อน build (1.0.1 -> 1.0.2 -> ... -> 1.0.99 -> 1.1.0)
-$version = & .\.venv\Scripts\python.exe bump_version.py
+if ($Version) {
+    $version = & .\.venv\Scripts\python.exe bump_version.py --set $Version
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+} else {
+    $version = & .\.venv\Scripts\python.exe bump_version.py
+}
 Write-Host "เวอร์ชันใหม่: $version" -ForegroundColor Cyan
 
 # รูป QR สนับสนุน (ไม่มีไฟล์ก็ข้ามไป โปรแกรมจะไม่แสดงรูปแต่ยังใช้งานได้)
