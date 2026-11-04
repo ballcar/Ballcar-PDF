@@ -21,6 +21,7 @@ class CommentsPanel(QWidget):
     goRequested = Signal(dict)         # คลิกรายการ -> ไปหน้านั้น
     editRequested = Signal(dict)       # ดับเบิลคลิก / ปุ่มแก้ไข
     deleteRequested = Signal(dict)
+    closeRequested = Signal()          # ปุ่ม × ปิดแผง
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -38,6 +39,11 @@ class CommentsPanel(QWidget):
         self.add_button.setProperty("role", "primary")
         self.add_button.clicked.connect(self.addRequested.emit)
         head.addWidget(self.add_button)
+        self.close_button = QPushButton("×")
+        self.close_button.setObjectName("panelClose")
+        self.close_button.setFixedWidth(30)
+        self.close_button.clicked.connect(self.closeRequested.emit)
+        head.addWidget(self.close_button)
         layout.addLayout(head)
 
         self.list = QListWidget()
@@ -73,6 +79,7 @@ class CommentsPanel(QWidget):
         self.edit_button.setText(t("cm.edit"))
         self.delete_button.setText(t("cm.delete"))
         self.empty.setText(t("cm.empty"))
+        self.close_button.setToolTip(t("cm.close"))
         self.title.setText(t("cm.title", n=self.list.count()))
 
     def set_comments(self, comments: list[dict], select: tuple | None = None) -> None:

@@ -2555,6 +2555,42 @@ class PdfDocument:
         page.delete_annot(page.load_annot(comment["xref"]))
         self.dirty = True
 
+    def note_info(self, page_index: int, xref: int) -> dict:
+        """ข้อความ/ผู้เขียน/กรอบ (พิกัดที่ผู้ใช้เห็น) ของโน้ต — ใช้ตอนชี้เมาส์ ลาก และแก้"""
+        page = self.doc.load_page(page_index)
+        annot = page.load_annot(xref)
+        info = annot.info or {}
+        rect = fitz.Rect(annot.rect)
+        if page.rotation:
+            rect = rect * page.rotation_matrix
+        return {"text": (info.get("content") or "").strip(),
+                "author": (info.get("title") or "").strip(), "rect": rect}
+
+    def move_note(self, page_index: int, xref: int, top_left: fitz.Point) -> None:
+        """ย้ายไอคอนโน้ต — top_left = มุมซ้ายบนใหม่ (พิกัดที่ผู้ใช้เห็น) ขนาดไอคอนเท่าเดิม"""
+        page = self.doc.load_page(page_index)
+        size = self.note_info(page_index, xref)["rect"]
+        bounds = page.rect if not page.rotation else page.rect * page.rotation_matrix
+        x = min(max(top_left.x, bounds.x0), bounds.x1 - size.width)    # ไม่ให้หลุดขอบกระดาษ
+        y = min(max(top_left.y, bounds.y0), bounds.y1 - size.height)
+        target = fitz.Rect(x, y, x + size.width, y + size.height)
+        if page.rotation:
+            target = target * page.derotation_matrix
+        self.push_undo()
+        page = self.doc.load_page(page_index)    # เก็บ page ไว้ (annotation อ้างถึง page แบบอ่อน)
+        annot = page.load_annot(xref)
+        annot.set_rect(target)
+        annot.update()
+        # หน้าที่หมุน: ไอคอนโน้ตไม่หมุนตามหน้า กรอบที่ได้จริงอาจเยื้องไปหนึ่งช่วงไอคอน — ชดเชยรอบเดียว
+        got = self.note_info(page_index, xref)["rect"]
+        dx, dy = x - got.x0, y - got.y0
+        if abs(dx) > 0.5 or abs(dy) > 0.5:
+            fixed = fitz.Rect(x + dx, y + dy, x + dx + size.width, y + dy + size.height)
+            annot = page.load_annot(xref)
+            annot.set_rect(fixed * page.derotation_matrix if page.rotation else fixed)
+            annot.update()
+        self.dirty = True
+
     def note_at(self, page_index: int, point: fitz.Point) -> int | None:
         """โน้ตที่จุดนั้น (คลิกไอคอนโน้ตบนหน้า) คืน xref หรือ None"""
         page = self.doc.load_page(page_index)

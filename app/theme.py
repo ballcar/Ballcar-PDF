@@ -221,6 +221,9 @@ def stylesheet(p: Palette) -> str:
         QPushButton[role="chip"]:hover {{ border-color:{p.accent}; background:{hover}; }}
         #homePage {{ background:{p.window}; }}
         #organizer {{ background:{p.window}; }}
+        QPushButton#panelClose {{ border:none; background:transparent; font-size:18px;
+            color:{p.text_muted}; padding:0; }}
+        QPushButton#panelClose:hover {{ color:{p.text}; background:{_mix(p.surface, p.accent, 0.12)}; }}
         #commentList {{ background:{p.surface}; border:1px solid {p.border}; border-radius:6px; }}
         #commentList::item {{ padding:6px 4px; border-bottom:1px solid {p.border}; color:{p.text}; }}
         #commentList::item:selected {{ background:{_mix(p.surface, p.accent, 0.14)}; color:{p.text}; }}

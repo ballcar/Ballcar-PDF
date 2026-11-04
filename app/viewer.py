@@ -14,7 +14,8 @@ import fitz
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import (QColor, QFont, QFontDatabase, QImage, QMouseEvent,
                            QPainter, QPen, QPixmap)
-from PySide6.QtWidgets import QLabel, QScrollArea, QWidget
+from PySide6.QtWidgets import QLabel, QScrollArea, QToolTip, QWidget
+from html import escape as html_escape
 
 from .pdfops import (PdfDocument, SearchHit, TextBox, find_thai_font,
                      merge_line_rects, page_words, render_textbox_bitmap,
@@ -250,6 +251,8 @@ class PageViewer(QScrollArea):
     editPointPicked = Signal(int, float, float)
     notePointPicked = Signal(int, float, float)   # 2.2: คลิกจุดที่จะแปะโน้ต
     noteClicked = Signal(int, int)                # 2.2: คลิกไอคอนโน้ตบนหน้า (page, xref)
+    noteEditRequested = Signal(int, int)          # ดับเบิลคลิกไอคอนโน้ต
+    noteMoved = Signal(int, int, float, float)    # ลากไอคอนโน้ตไปวางใหม่ (page, xref, x, y มุมซ้ายบน)
     rectDragged = Signal(int, object)
     eraseDragged = Signal(int, object)
     annotDrawn = Signal(int, object)
@@ -288,6 +291,8 @@ class PageViewer(QScrollArea):
         self._drag_start: QPoint | None = None   # พิกเซลบนหน้า (เทียบมุมบนซ้ายหน้านั้น)
         self._drag_now: QPoint | None = None
         self._annotating = False
+        self._note_drag: dict | None = None   # กำลังกด/ลากไอคอนโน้ต {page, xref, rect, grab, now, moved}
+        self._hover_note: tuple | None = None
         self._annot_tool = "draw"
         self._annot_color = (0.9, 0.1, 0.1)
         self._annot_width = 2.0
@@ -596,6 +601,19 @@ class PageViewer(QScrollArea):
             painter.fillRect(QRect(g.x() + SHADOW, g.y() + SHADOW, g.width(), g.height()),
                              QColor(0, 0, 0, 45))                     # เงาใต้กระดาษ
             painter.drawPixmap(g.topLeft(), self._page_pixmap(i))
+            drag = self._note_drag
+            if drag is not None and drag["moved"] and drag["page"] == i:
+                r = drag["rect"]
+                dx = drag["now"][0] - drag["grab"][0]
+                dy = drag["now"][1] - drag["grab"][1]
+                z = self.zoom
+                ghost = QRect(int(g.x() + (r.x0 + dx) * z), int(g.y() + (r.y0 + dy) * z),
+                              max(12, int(r.width * z)), max(12, int(r.height * z)))
+                painter.save()
+                painter.setPen(QPen(QColor(0xe0, 0x8a, 0x00), 2, Qt.DashLine))
+                painter.setBrush(QColor(255, 204, 0, 140))
+                painter.drawRect(ghost)
+                painter.restore()
             painter.setPen(QColor(0, 0, 0, 60)); painter.setBrush(Qt.NoBrush)
             painter.drawRect(g.adjusted(0, 0, -1, -1))                # เส้นขอบกระดาษบางๆ
             self._paint_overlays(painter, i, g)
@@ -869,8 +887,10 @@ class PageViewer(QScrollArea):
         tb = self.doc.textbox_at(idx, point)
         stamp = self.doc.stamp_at(idx, point)
         note = self.doc.note_at(idx, point) if tb is None and stamp is None else None
-        if note is not None:            # คลิกไอคอนโน้ต = เปิดอ่าน/แก้ในแผงความคิดเห็น
-            self.noteClicked.emit(idx, note)
+        if note is not None:            # กดไอคอนโน้ต: ปล่อยเลย = ดูข้อความ, ลากไป = ย้าย
+            self._note_drag = {"page": idx, "xref": note, "grab": (px, py), "now": (px, py),
+                               "rect": self.doc.note_info(idx, note)["rect"], "moved": False}
+            self._label.setCursor(Qt.ClosedHandCursor)
             return
         if tb is not None:
             self.clear_selection()
@@ -895,6 +915,15 @@ class PageViewer(QScrollArea):
                 self._label.update()
 
     def _dispatch_move(self, canvas_pt: QPoint) -> None:
+        if self._note_drag is not None:
+            g = self._geoms[self._note_drag["page"]]
+            now = ((canvas_pt.x() - g.x()) / self.zoom, (canvas_pt.y() - g.y()) / self.zoom)
+            gx, gy = self._note_drag["grab"]
+            if abs(now[0] - gx) * self.zoom > 3 or abs(now[1] - gy) * self.zoom > 3:
+                self._note_drag["moved"] = True
+            self._note_drag["now"] = now
+            self._label.update()
+            return
         if self._annotating and self._annot_points and self._annot_page >= 0:
             g = self._geoms[self._annot_page]
             pt = ((canvas_pt.x() - g.x()) / self.zoom, (canvas_pt.y() - g.y()) / self.zoom)
@@ -913,8 +942,48 @@ class PageViewer(QScrollArea):
             g = self._geoms[self._sel_page]
             end = ((canvas_pt.x() - g.x()) / self.zoom, (canvas_pt.y() - g.y()) / self.zoom)
             self._update_selection(self._sel_page, self._sel_from, end)
+            return
+        self._hover_notes(canvas_pt)
+
+    def _hover_notes(self, canvas_pt: QPoint) -> None:
+        """ชี้เมาส์ที่ไอคอนโน้ต = เห็นข้อความทันที (และเคอร์เซอร์มือ บอกว่าลากย้ายได้)"""
+        if (not self.doc or not self.doc.page_count or self.placing or self._picking_point
+                or self._highlighting or self._erasing or self._annotating):
+            return
+        idx, px, py = self._page_at(canvas_pt)
+        note = self.doc.note_at(idx, fitz.Point(px, py))
+        if note is None:
+            if self._hover_note is not None:
+                self._hover_note = None
+                self._label.unsetCursor()
+                QToolTip.hideText()
+            return
+        if self._hover_note != (idx, note):
+            self._hover_note = (idx, note)
+            self._label.setCursor(Qt.OpenHandCursor)
+            self.show_note_text(idx, note, self._label.mapToGlobal(canvas_pt))
+
+    def show_note_text(self, page: int, xref: int, global_pt) -> None:
+        info = self.doc.note_info(page, xref)
+        head = f"<b>{html_escape(info['author'])}</b><br>" if info["author"] else ""
+        body = html_escape(info["text"] or "…").replace("\n", "<br>")
+        QToolTip.showText(global_pt + QPoint(14, 14), head + body, self._label,
+                          QRect(), 15000)
 
     def _dispatch_release(self, canvas_pt: QPoint, button) -> None:
+        if self._note_drag is not None:
+            drag, self._note_drag = self._note_drag, None
+            self._label.setCursor(Qt.OpenHandCursor)
+            self._label.update()
+            if drag["moved"]:
+                dx = drag["now"][0] - drag["grab"][0]
+                dy = drag["now"][1] - drag["grab"][1]
+                self.noteMoved.emit(drag["page"], drag["xref"],
+                                    drag["rect"].x0 + dx, drag["rect"].y0 + dy)
+            else:
+                self.show_note_text(drag["page"], drag["xref"], self._label.mapToGlobal(canvas_pt))
+                self.noteClicked.emit(drag["page"], drag["xref"])
+            return
         if self._annotating and self._annot_points and self._annot_page >= 0:
             pts = list(self._annot_points)
             page = self._annot_page
@@ -956,6 +1025,11 @@ class PageViewer(QScrollArea):
         idx, px, py = self._page_at(canvas_pt)
         self.index = idx
         point = fitz.Point(px, py)
+        note = self.doc.note_at(idx, point)
+        if note is not None:            # ดับเบิลคลิกไอคอนโน้ต = แก้ข้อความ
+            self._note_drag = None
+            self.noteEditRequested.emit(idx, note)
+            return
         tb = self.doc.textbox_at(idx, point)
         if tb is not None:
             self.selected_textbox = tb

@@ -682,6 +682,8 @@ class MainWindow(QMainWindow):
         self.viewer.editPointPicked.connect(self._on_edit_point_picked)
         self.viewer.notePointPicked.connect(self._on_note_point_picked)
         self.viewer.noteClicked.connect(self._on_note_clicked)
+        self.viewer.noteEditRequested.connect(self._edit_note)
+        self.viewer.noteMoved.connect(self._on_note_moved)
         self.viewer.rectDragged.connect(self._on_rect_dragged)
         self.viewer.eraseDragged.connect(self._on_erase_dragged)
         self.viewer.annotDrawn.connect(self._on_annot_drawn)
@@ -844,6 +846,7 @@ class MainWindow(QMainWindow):
         self.comments_panel.goRequested.connect(self._goto_comment)
         self.comments_panel.editRequested.connect(self._edit_comment)
         self.comments_panel.deleteRequested.connect(self._delete_comment)
+        self.comments_panel.closeRequested.connect(lambda: self.act_show_comments.setChecked(False))
         self.comments_panel.hide()
         splitter.addWidget(self.comments_panel)
         # 2.0: ภาพย่อหน้าอยู่ขวาสุด (ซ้ายเป็นแถบเครื่องมือแล้ว) — แสดงเฉพาะไฟล์หลายหน้า
@@ -1758,7 +1761,7 @@ class MainWindow(QMainWindow):
             menu.exec(self.thumbs.viewport().mapToGlobal(pos))
 
     def _viewer_context_menu(self, pos) -> None:
-        menu = self.build_viewer_menu()
+        menu = self.build_viewer_menu(pos)
         if menu:
             menu.exec(self.viewer.mapToGlobal(pos))
 
@@ -1800,12 +1803,31 @@ class MainWindow(QMainWindow):
         menu.addAction(f"🗑 ลบ {label}", self.delete_selected)
         return menu
 
-    def build_viewer_menu(self) -> QMenu | None:
-        """คลิกขวาบนหน้าที่กำลังดู — ทำงานกับหน้านั้นหน้าเดียว"""
+    def build_viewer_menu(self, pos=None) -> QMenu | None:
+        """คลิกขวาบนหน้าที่กำลังดู — ทำงานกับหน้านั้นหน้าเดียว
+        pos = จุดที่คลิก (พิกัดเทียบ viewer): ใช้วางโน้ตตรงนั้น / เมนูของไอคอนโน้ต"""
         if not self.doc or not self.doc.page_count:
             return None
+        if pos is not None:
+            canvas = self.viewer._label.mapFrom(self.viewer, pos)
+            page_index, px, py = self.viewer._page_at(canvas)
+            note = self.doc.note_at(page_index, fitz.Point(px, py))
+            if note is not None:
+                menu = QMenu(self)
+                menu.addAction(icons.icon("pencil-line"), t("cm.edit_note"),
+                               lambda: self._edit_note(page_index, note))
+                menu.addAction(icons.icon("trash-2"), t("cm.delete_note"),
+                               lambda: self._delete_note(page_index, note))
+                menu.addSeparator()
+                hint = menu.addAction(t("cm.drag_hint"))
+                hint.setEnabled(False)
+                return menu
         self.thumbs.setCurrentRow(self.viewer.index)
         menu = QMenu(self)
+        if pos is not None:
+            menu.addAction(icons.icon("sticky-note"), t("cm.add_here"),
+                           lambda: self._add_note_at(page_index, px, py))
+            menu.addSeparator()
         if self.viewer.selected_text:      # มีข้อความที่ลากเลือกไว้ -> ให้คัดลอกได้เลย
             menu.addAction(t("sel.copy"), self.copy_selected_text)
             menu.addAction(t("sel.highlight"), self.highlight_selected_text)
@@ -4113,18 +4135,31 @@ class MainWindow(QMainWindow):
             self.statusBar().clearMessage()
             return
         xref = self.doc.add_note(page_index, fitz.Point(px, py), text)
-        self._show_comments_panel()
         self._refresh_all(keep_row=page_index)
-        self._refresh_comments(select=(page_index, xref))
+        if self.comments_panel.isVisible():
+            self._refresh_comments(select=(page_index, xref))
         self.statusBar().showMessage(t("cm.added"), 6000)
 
     def _on_note_clicked(self, page_index: int, xref: int) -> None:
-        """คลิกไอคอนโน้ตบนหน้า -> เปิดแผงแล้วเลือกโน้ตนั้น (อ่านข้อความเต็มได้)"""
-        self._show_comments_panel()
-        self._refresh_comments(select=(page_index, xref))
-        current = self.comments_panel.current()
-        if current:
-            self.statusBar().showMessage(current["text"][:200], 8000)
+        """คลิกไอคอนโน้ต — ข้อความขึ้นข้างเมาส์แล้ว (viewer) ถ้าแผงเปิดอยู่ก็เลือกรายการนั้นด้วย"""
+        if self.comments_panel.isVisible():
+            self._refresh_comments(select=(page_index, xref))
+
+    def _on_note_moved(self, page_index: int, xref: int, x: float, y: float) -> None:
+        self.doc.move_note(page_index, xref, fitz.Point(x, y))
+        self._refresh_all(keep_row=page_index)
+        self.statusBar().showMessage(t("cm.moved"), 4000)
+
+    def _edit_note(self, page_index: int, xref: int) -> None:
+        info = self.doc.note_info(page_index, xref)
+        self._edit_comment({"page": page_index, "xref": xref, "content": info["text"]})
+
+    def _delete_note(self, page_index: int, xref: int) -> None:
+        self._delete_comment({"page": page_index, "xref": xref, "floating": None})
+
+    def _add_note_at(self, page_index: int, px: float, py: float) -> None:
+        """คลิกขวาบนหน้า -> เพิ่มโน้ตตรงนี้"""
+        self._on_note_point_picked(page_index, px, py)
 
     def _goto_comment(self, c: dict) -> None:
         if self._organizing():
@@ -4139,7 +4174,8 @@ class MainWindow(QMainWindow):
             return
         self.doc.edit_comment(c["page"], c["xref"], text)
         self._refresh_all(keep_row=c["page"])
-        self._refresh_comments(select=(c["page"], c["xref"]))
+        if self.comments_panel.isVisible():
+            self._refresh_comments(select=(c["page"], c["xref"]))
 
     def _delete_comment(self, c: dict) -> None:
         self.doc.delete_comment(c)

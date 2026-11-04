@@ -117,6 +117,82 @@ w.tab_bar.setCurrentIndex(0); app.processEvents()
 assert panel.list.count() == 3
 print("OK  สลับแท็บ แผงความคิดเห็นเปลี่ยนตามไฟล์")
 
+# ---- ปิดแผงด้วยปุ่ม × ----
+panel.close_button.click(); app.processEvents()
+assert not panel.isVisible() and not w.act_show_comments.isChecked()
+print("OK  ปุ่ม × ปิดแผงความคิดเห็นได้")
+
+# ---- ใช้โน้ตบนหน้าโดยไม่ต้องเปิดแผง ----
+from PySide6.QtCore import QPoint, Qt
+v = w.viewer
+v.set_zoom(1.0); app.processEvents()
+g = v._geoms[0]
+
+
+def canvas(x, y, page=0):
+    gg = v._geoms[page]
+    return QPoint(int(gg.x() + x), int(gg.y() + y))
+
+
+def viewer_pos(x, y, page=0):
+    return v._label.mapTo(v, canvas(x, y, page))
+
+
+# คลิกขวาที่ว่าง -> "เพิ่มโน้ตตรงนี้" อยู่บนสุด -> พิมพ์ -> โน้ตอยู่ตรงจุดที่คลิก (แผงไม่เด้งขึ้นมา)
+menu = w.build_viewer_menu(viewer_pos(400, 500))
+first = [a for a in menu.actions() if a.text()][0]
+assert first.text() == i18n.t("cm.add_here"), first.text()
+before = len(w.doc.comments())
+with patch.object(QInputDialog, "getMultiLineText", return_value=("คลิกขวาแปะ", True)):
+    first.trigger()
+app.processEvents()
+added = [c for c in w.doc.comments() if c["text"] == "คลิกขวาแปะ"][0]
+assert len(w.doc.comments()) == before + 1 and added["rect"].contains(fitz.Point(402, 502))
+assert not panel.isVisible(), "แปะโน้ตแล้วแผงไม่ต้องเด้งขึ้นมา"
+print("OK  คลิกขวา → เพิ่มโน้ตตรงนี้ → พิมพ์ = โน้ตอยู่ตรงจุดที่คลิก")
+
+# ชี้เมาส์ที่ไอคอน = เห็นข้อความ (เคอร์เซอร์มือ)
+v._dispatch_move(canvas(405, 505)); app.processEvents()
+assert v._hover_note == (0, added["xref"])
+assert v._label.cursor().shape() == Qt.OpenHandCursor
+v._dispatch_move(canvas(40, 40)); app.processEvents()
+assert v._hover_note is None
+print("OK  ชี้เมาส์ที่ไอคอนโน้ต = เห็นข้อความ")
+
+# ลากไอคอนไปวางที่ใหม่
+clicked = []
+v.noteClicked.connect(lambda p, x: clicked.append(x))
+v._dispatch_press(canvas(405, 505), Qt.LeftButton)
+v._dispatch_move(canvas(455, 605))
+v._dispatch_release(canvas(455, 605), Qt.LeftButton)
+app.processEvents()
+moved = w.doc.note_info(0, added["xref"])["rect"]
+assert abs(moved.x0 - (added["rect"].x0 + 50)) < 1.5 and abs(moved.y0 - (added["rect"].y0 + 100)) < 1.5, moved
+assert not clicked, "ลากแล้วไม่ใช่การคลิก"
+assert w.doc.undo() and abs(w.doc.note_info(0, added["xref"])["rect"].x0 - added["rect"].x0) < 1
+w.doc.redo(); w._refresh_all(keep_row=0)
+# คลิกเฉยๆ (ไม่ลาก) = ดูข้อความ ไม่ย้าย
+v._dispatch_press(canvas(457, 607), Qt.LeftButton)
+v._dispatch_release(canvas(457, 607), Qt.LeftButton)
+assert clicked == [added["xref"]] and w.doc.note_info(0, added["xref"])["rect"] == moved
+print("OK  ลากไอคอนโน้ตย้ายที่ได้ (ย้อนกลับได้) · คลิกเฉยๆ = ดูข้อความ")
+
+# คลิกขวาที่ไอคอน = แก้ไข / ลบ
+menu = w.build_viewer_menu(viewer_pos(457, 607))
+labels = [a.text() for a in menu.actions() if a.text()]
+assert labels[:2] == [i18n.t("cm.edit_note"), i18n.t("cm.delete_note")], labels
+with patch.object(QInputDialog, "getMultiLineText", return_value=("แก้จากคลิกขวา", True)):
+    menu.actions()[0].trigger()
+assert w.doc.note_info(0, added["xref"])["text"] == "แก้จากคลิกขวา"
+with patch.object(QInputDialog, "getMultiLineText", return_value=("ดับเบิลคลิกแก้", True)):
+    v._dispatch_double(canvas(457, 607), Qt.LeftButton)
+assert w.doc.note_info(0, added["xref"])["text"] == "ดับเบิลคลิกแก้"
+menu = w.build_viewer_menu(viewer_pos(457, 607))
+menu.actions()[1].trigger(); app.processEvents()
+assert not [c for c in w.doc.comments() if c["xref"] == added["xref"]]
+assert w.doc.note_at(0, fitz.Point(457, 607)) is None, "ลบแล้วไอคอนต้องหายจากหน้า"
+print("OK  คลิกขวาที่ไอคอน → แก้ไข / ลบ · ดับเบิลคลิก = แก้")
+
 for tab in w._tabs:
     tab["doc"].dirty = False
 print("\nผ่านทั้งหมด")
