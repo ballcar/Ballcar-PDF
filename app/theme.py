@@ -170,6 +170,7 @@ def stylesheet(p: Palette) -> str:
         QToolButton:pressed, QToolButton:checked {{ background:{pressed}; }}
         QToolButton#toolsButton {{ font-weight:bold; padding:3px 10px; }}
         QToolButton#toolsButton::menu-indicator {{ subcontrol-position:right center; }}
+        QToolButton#assistantButton {{ margin-right:6px; }}
         QPushButton[role="primary"] {{ background:{p.accent}; color:{p.accent_text};
             border:none; border-radius:5px; font-weight:bold; padding:6px 16px; }}
         QPushButton[role="primary"]:hover {{ background:{_mix(p.accent, '#000000', 0.12)}; }}
@@ -224,6 +225,7 @@ def stylesheet(p: Palette) -> str:
             border:1px solid {p.border}; border-radius:8px; padding:10px 14px; }}
         QPushButton[role="card"]:hover {{ border-color:{p.accent}; background:{hover}; }}
         QPushButton[role="card"]:pressed {{ background:{pressed}; }}
+        QLabel[role="cardTitle"] {{ font-weight:bold; font-size:14px; color:{p.text}; }}
         #recentList {{ background:{p.surface}; border:1px solid {p.border}; border-radius:8px;
                        padding:4px; color:{p.text}; }}
         #recentList::item {{ padding:6px 8px; border-radius:6px; }}
@@ -232,6 +234,9 @@ def stylesheet(p: Palette) -> str:
         #linkButton:hover {{ text-decoration:underline; }}
         QListWidget::item:selected, QTreeWidget::item:selected {{
             background:{_mix(p.surface, p.accent, 0.35)}; color:{p.text}; }}
+        #thumbList::item {{ border:2px solid transparent; border-radius:6px; margin:2px; }}
+        #thumbList::item:selected {{ background:{_mix(p.surface, p.accent, 0.12)};
+            border:2px solid {p.accent}; color:{p.text}; }}
         {bars}
     """
 

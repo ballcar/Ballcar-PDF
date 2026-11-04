@@ -119,6 +119,7 @@ w2.resize(1050, 150); w2.show()
 import PySide6.QtWidgets as _qtw
 _qtw.QApplication.processEvents()
 need = w2._toolbar.sizeHint().width()
-# บน Windows จริง ~774px (offscreen วัดกว้างกว่าเพราะไม่มีฟอนต์อิโมจิ) — เดิม ~1700
-assert need < 1200, f"แถบเครื่องมือควรกระชับ (<1200px) ได้ {need}"
-print(f"OK  แถบเครื่องมือกระชับ ({need}px offscreen / ~774px จริง) พอดีจอทั่วไป")
+# บน Windows จริง ~1090px รวมปุ่มผู้ช่วยชิดขวา (2.0) พอดีจอ 1280 ขึ้นไป
+# (offscreen วัดกว้างกว่าเพราะไม่มีฟอนต์อิโมจิ) — ก่อนรวม dropdown ~1700
+assert need < 1450, f"แถบเครื่องมือควรกระชับ (<1450px offscreen) ได้ {need}"
+print(f"OK  แถบเครื่องมือกระชับ ({need}px offscreen / ~1090px จริง) พอดีจอ 1280 ขึ้นไป")

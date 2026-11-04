@@ -4,6 +4,10 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+; ระดับบีบอัดส่งมาจาก build-installer.ps1 (-Fast = lzma2/fast สำหรับตัวทดสอบ)
+#ifndef Compress
+  #define Compress "lzma2/max"
+#endif
 #define AppExe "Ballcar PDF.exe"
 #define ProgId "BallcarPDF.Document"
 
@@ -21,7 +25,7 @@ OutputDir=..\dist
 OutputBaseFilename=Ballcar PDF Installer
 SetupIconFile=..\logo\Ballcar PDF.ico
 UninstallDisplayIcon={app}\{#AppExe}
-Compression=lzma2/max
+Compression={#Compress}
 SolidCompression=yes
 WizardStyle=modern
 ; ถ้าโปรแกรมเปิดค้างอยู่ตอนอัปเดต ให้ตรวจเจอและปิดให้ (ไม่งั้นไฟล์ถูกล็อก ติดตั้งล้มเหลว)

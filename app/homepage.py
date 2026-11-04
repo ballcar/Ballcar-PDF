@@ -62,6 +62,9 @@ class HomePage(QWidget):
         self.recent_list = QListWidget()
         self.recent_list.setObjectName("recentList")
         self.recent_list.setIconSize(QSize(22, 22))
+        # ที่อยู่ไฟล์ยาว -> ย่อตรงกลางด้วย … แทนแถบเลื่อนแนวนอน (ที่อยู่เต็มอยู่ใน tooltip)
+        self.recent_list.setTextElideMode(Qt.ElideMiddle)
+        self.recent_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         # คลิกครั้งเดียวเปิดเลย (ต่อ itemActivated ด้วยจะเปิดซ้ำตอนดับเบิลคลิก)
         self.recent_list.itemClicked.connect(self._open_item)
         self.recent_list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -71,6 +74,7 @@ class HomePage(QWidget):
         self.empty = QLabel()
         self.empty.setProperty("role", "hint")
         layout.addWidget(self.empty)
+        layout.addStretch(0)     # ยังไม่มีไฟล์ล่าสุด (รายการซ่อน) -> ดันทุกอย่างขึ้นบน ไม่กระจายห่างกัน
 
         self._texts: dict[str, str] = {}
 
@@ -91,11 +95,33 @@ class HomePage(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         for action, title, detail in actions:
-            card = QPushButton(f"{title}\n{detail}")
-            card.setIcon(action.icon())
-            card.setIconSize(QSize(26, 26))
+            # ชื่อตัวหนา + คำอธิบายสีจาง (ข้อความบน QPushButton ทำได้แค่แบบเดียวทั้งปุ่ม จึงวาง label ข้างใน)
+            card = QPushButton()
             card.setProperty("role", "card")
+            card.setProperty("title", title)
+            card.setAccessibleName(f"{title} — {detail}")
+            card.setToolTip(detail)
             card.setMinimumHeight(64)
+            row = QHBoxLayout(card)
+            row.setContentsMargins(14, 10, 14, 10)
+            row.setSpacing(12)
+            icon = QLabel()
+            icon.setPixmap(action.icon().pixmap(QSize(28, 28)))
+            texts = QVBoxLayout()
+            texts.setSpacing(2)
+            name = QLabel(title)
+            name.setProperty("role", "cardTitle")
+            sub = QLabel(detail)
+            sub.setProperty("role", "hint")
+            texts.addWidget(name)
+            texts.addWidget(sub)
+            row.addWidget(icon)
+            row.addLayout(texts, 1)
+            for label in (icon, name, sub):
+                label.setAttribute(Qt.WA_TransparentForMouseEvents)   # คลิกทะลุไปที่การ์ด
+            for label in (name, sub):
+                label.ensurePolished()       # ให้ขนาดคิดจากฟอนต์ตัวหนาของธีมแล้ว
+            card.setMinimumWidth(row.sizeHint().width())   # ปุ่มไม่คิดขนาดจาก label ข้างใน -> กันข้อความถูกตัด
             card.setCursor(Qt.PointingHandCursor)
             card.clicked.connect(action.trigger)
             self._cards.addWidget(card, 1)

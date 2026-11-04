@@ -49,7 +49,7 @@ w = M.MainWindow()
 assert w._doc_stack.currentWidget() is w.home
 assert w.home.recent_list.count() == 1 and w.home.empty.isHidden()
 cards = w.home.findChildren(QPushButton)
-assert [c.text().split("\n")[0] for c in cards if c.property("role") == "card"] == \
+assert [c.property("title") for c in cards if c.property("role") == "card"] == \
        [i18n.t("home.open"), i18n.t("home.merge"), i18n.t("home.batch")]
 print("OK  ยังไม่เปิดไฟล์แสดงหน้าแรก พร้อมการ์ดงานหลัก 3 อย่าง และไฟล์ล่าสุด")
 

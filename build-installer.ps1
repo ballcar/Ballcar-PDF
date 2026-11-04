@@ -1,4 +1,7 @@
 ﻿# สร้างตัวติดตั้ง Ballcar PDF Installer.exe (ดึงเลขเวอร์ชันจาก version.json อัตโนมัติ)
+# -Fast = ตัวทดสอบ: บีบอัดแบบเร็ว (~25 วินาที แทน ~3.5 นาที แต่ไฟล์ใหญ่ขึ้น ~30 MB)
+#         ตัวจริงที่ส่งเครื่องลูก (release.ps1) ไม่ใส่ -Fast -> บีบอัดสูงสุดเหมือนเดิม
+param([switch]$Fast)
 Set-Location $PSScriptRoot
 
 $exe = ".\dist\Ballcar PDF\Ballcar PDF.exe"
@@ -19,7 +22,9 @@ if (-not $iscc -or -not (Test-Path $iscc)) {
     exit 1
 }
 
-& $iscc "/DAppVersion=$version" ".\installer\BallcarPDF.iss"
+$compress = if ($Fast) { "lzma2/fast" } else { "lzma2/max" }
+Write-Host "บีบอัด: $compress" -ForegroundColor Cyan
+& $iscc "/DAppVersion=$version" "/DCompress=$compress" ".\installer\BallcarPDF.iss"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "compile ไม่สำเร็จ" -ForegroundColor Red
     exit 1

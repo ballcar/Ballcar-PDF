@@ -23,6 +23,17 @@ foreach ($q in $qrFiles) {
 }
 if (-not $qrArgs) { Write-Host "ไม่พบรูป QR - หน้าต่างเกี่ยวกับจะไม่แสดงรูป" -ForegroundColor Yellow }
 
+# โมเดล AI ของผู้ช่วย (ไม่อยู่ใน repo — ไม่มีก็ข้ามไป ผู้ช่วยใช้กฎอย่างเดียว)
+# แพ็กไว้ที่ _internal\models\<ชื่อโมเดล> ตรงกับที่ app\semantic.py มองหา
+$aiArgs = @()
+$aiModel = "models\paraphrase-multilingual-MiniLM-L12-v2"
+if ((Test-Path ".\$aiModel\model.onnx") -and (Test-Path ".\$aiModel\tokenizer.json")) {
+    $aiArgs = @("--add-data", "$aiModel;$aiModel")
+    Write-Host "ใส่โมเดล AI ผู้ช่วย: $aiModel" -ForegroundColor Green
+} else {
+    Write-Host "ไม่พบโมเดล AI - ผู้ช่วยจะใช้กฎอย่างเดียว" -ForegroundColor Yellow
+}
+
 # ฝังข้อมูลลิขสิทธิ์/เวอร์ชันลงไฟล์ .exe (คลิกขวา -> Properties -> Details จะเห็น)
 & .\.venv\Scripts\python.exe scripts\make-version-info.py
 
@@ -38,6 +49,7 @@ if (-not $qrArgs) { Write-Host "ไม่พบรูป QR - หน้าต่
     --add-data "tessdata;tessdata" `
     --add-data "app\icons;app\icons" `
     @qrArgs `
+    @aiArgs `
     --exclude-module PySide6.QtQuick `
     --exclude-module PySide6.QtQml `
     --exclude-module PySide6.Qt3DCore `

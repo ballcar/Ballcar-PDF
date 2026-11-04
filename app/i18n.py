@@ -156,7 +156,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "tb.signature": "✒ ลายเซ็น",
         "tb.signature_tip": "ลายเซ็นที่บันทึกไว้ — คลิกเลือกแล้ววางได้เลย",
         "tb.add_text": "🅣 เพิ่มข้อความ",
-        "tb.tools": "✎ เครื่องมือแก้ไข ",
+        "tb.tools": "เครื่องมือแก้ไข",
         # แทรกไฟล์ / รวมไฟล์ / แยกไฟล์
         "ins.pick": "เลือกไฟล์ PDF ที่จะแทรก (เลือกหลายไฟล์ได้ด้วย Ctrl หรือ Shift)",
         "ins.failed": "แทรกไฟล์ไม่สำเร็จ",
@@ -675,7 +675,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "tb.signature": "✒ Signatures",
         "tb.signature_tip": "Saved signatures — click one to place it",
         "tb.add_text": "🅣 Add Text",
-        "tb.tools": "✎ Edit Tools ",
+        "tb.tools": "Edit Tools",
         "ins.pick": "Choose PDF files to insert (Ctrl or Shift to select several)",
         "ins.failed": "Insert failed",
         "ins.done": "Inserted {files} file(s), {pages} page(s) at page {at} — remember to save",

@@ -16,7 +16,7 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QToolButton,
-    QPushButton, QSplitter, QStackedWidget, QStatusBar, QToolBar, QTreeWidget, QTreeWidgetItem,
+    QPushButton, QSizePolicy, QSplitter, QStackedWidget, QStatusBar, QToolBar, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -562,6 +562,7 @@ class MainWindow(QMainWindow):
 
         self.viewer = PageViewer()
         self.thumbs = ThumbList()
+        self.thumbs.setObjectName("thumbList")    # สีหน้าที่เลือก: กรอบสีหลัก (theme.py)
         self.thumbs.setIconSize(QSize(140, 190))
         self.thumbs.setSelectionMode(QListWidget.ExtendedSelection)
         self.thumbs.setMinimumWidth(80)   # ไม่ล็อกกว้างสูงสุด ให้ลากขยายได้
@@ -760,6 +761,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.thumbs)
         hint = self._hint_label = QLabel(t("thumb.hint"))
         hint.setAlignment(Qt.AlignCenter)
+        hint.setWordWrap(True)        # แถบแคบ — ตัดบรรทัดแทนการถูกตัดท้ายข้อความ
         hint.setProperty("role", "hint")
         left_layout.addWidget(hint)
         # ใช้ความกว้างขั้นต่ำ ไม่ล็อกความกว้างสูงสุด — ไม่งั้นลากเส้นแบ่งขยายไม่ได้
@@ -968,7 +970,8 @@ class MainWindow(QMainWindow):
 
         self.tools_button = QToolButton()
         self.tools_button.setText(t("tb.tools"))
-        self.tools_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.tools_button.setIcon(icons.icon("pen-tool"))
+        self.tools_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.tools_button.setPopupMode(QToolButton.InstantPopup)
         self.tools_button.setObjectName("toolsButton")
         tools_menu = QMenu(self)
@@ -985,6 +988,24 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(self.act_assistant)
         self.tools_button.setMenu(tools_menu)
         bar.addWidget(self.tools_button)
+
+        # ผู้ช่วยคำสั่ง: ไอคอนชิดขวาสุดของแถบ — หาเจอทันทีโดยไม่ต้องกางเมนู (ชื่อเต็มอยู่ใน tooltip)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        bar.addWidget(spacer)
+        self.assistant_button = QToolButton()
+        self.assistant_button.setObjectName("assistantButton")
+        self.assistant_button.setIcon(self.act_assistant.icon())
+        self.assistant_button.setToolTip(toolpanel.short_name(self.act_assistant.text()))
+        self.assistant_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.assistant_button.setIconSize(bar.iconSize())      # ขนาดเท่าปุ่มอื่นบนแถบ
+        self.assistant_button.setAutoRaise(True)
+        self.assistant_button.setCursor(Qt.PointingHandCursor)
+        self.assistant_button.clicked.connect(self.act_assistant.trigger)
+        self.act_assistant.changed.connect(
+            lambda: self.assistant_button.setEnabled(self.act_assistant.isEnabled()))
+        self.assistant_button.setEnabled(self.act_assistant.isEnabled())
+        bar.addWidget(self.assistant_button)
 
     def _build_menu(self) -> None:
         menu = self.menuBar()
@@ -1505,7 +1526,9 @@ class MainWindow(QMainWindow):
             tallest = max((p.height() for p in pixmaps), default=1)
             self.thumbs.setIconSize(QSize(target, tallest))
             for i, pix in enumerate(pixmaps):
-                item = QListWidgetItem(QIcon(pix), t("thumb.page", n=i + 1))
+                icon = QIcon(pix)
+                icon.addPixmap(pix, QIcon.Selected)   # หน้าที่เลือกไม่ย้อมสีทับภาพ (กรอบสีหลักบอกแทน)
+                item = QListWidgetItem(icon, t("thumb.page", n=i + 1))
                 item.setData(Qt.UserRole, i)  # ใช้อ้างลำดับเดิมตอนลากวาง
                 self.thumbs.addItem(item)
         self.thumbs.blockSignals(False)
