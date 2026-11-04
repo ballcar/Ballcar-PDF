@@ -23,14 +23,14 @@ from PySide6.QtWidgets import (
 
 if __package__ in (None, ""):  # รันตรงๆ ด้วย python app/main.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from app import (assistant, assistant_ui, autosave, batch, errorlog, homepage, i18n, icons,
-                     comments, library, organizer, pdfops, recent, semantic, theme, toolpanel, updater)
+    from app import (assistant, assistant_ui, autosave, batch, compare, errorlog, homepage, i18n, icons,
+                     comments, library, organizer, pdfops, recent, semantic, signtools, theme, toolpanel, updater, whatsnew)
     from app.i18n import t
     from app.pdfops import PdfDocument, merge_files, parse_page_ranges
     from app.viewer import PageViewer, pixmap_to_qimage
 else:
-    from . import (assistant, assistant_ui, autosave, batch, errorlog, homepage, i18n, icons,
-                   comments, library, organizer, pdfops, recent, semantic, theme, toolpanel, updater)
+    from . import (assistant, assistant_ui, autosave, batch, compare, errorlog, homepage, i18n, icons,
+                   comments, library, organizer, pdfops, recent, semantic, signtools, theme, toolpanel, updater, whatsnew)
     from .i18n import t
     from .pdfops import PdfDocument, merge_files, parse_page_ranges
     from .viewer import PageViewer, pixmap_to_qimage
@@ -684,6 +684,7 @@ class MainWindow(QMainWindow):
         self.viewer.noteClicked.connect(self._on_note_clicked)
         self.viewer.noteEditRequested.connect(self._edit_note)
         self.viewer.noteMoved.connect(self._on_note_moved)
+        self.viewer.captureDragged.connect(self._on_signature_captured)
         self.viewer.rectDragged.connect(self._on_rect_dragged)
         self.viewer.eraseDragged.connect(self._on_erase_dragged)
         self.viewer.annotDrawn.connect(self._on_annot_drawn)
@@ -1100,6 +1101,8 @@ class MainWindow(QMainWindow):
         for a in (next_tab, prev_tab):
             m_file.addAction(a)
         m_file.addSeparator()
+        m_file.addAction(self._act(t("settings.menu"), self.settings_dialog, "Ctrl+,", icon="palette"))
+        m_file.addSeparator()
         m_file.addAction(self._act(t("file.exit"), self.close, "Ctrl+Q", icon="log-out"))
 
         m_edit = menu.addMenu(t("menu.edit"))
@@ -1131,6 +1134,8 @@ class MainWindow(QMainWindow):
             self._act(t("tools.fill_form"), self.fill_form_dialog, icon="clipboard-list"),
             self._act(t("tools.password"), self.password_dialog, icon="lock"),
             self._act(t("tools.cover_text"), self.cover_text_dialog, icon="eraser"),
+            self._act(t("stamp.menu"), self.stamp_dialog, icon="signature"),
+            self._act(t("cmpdoc.menu"), self.compare_dialog, icon="layers"),
             self._act(t("tools.batch"), self.batch_dialog, icon="layers"),
             self._act(t("tools.merge"), self.merge_dialog, icon="merge"),
             self._act(t("tools.split"), self.split_dialog, icon="scissors"),
@@ -1191,6 +1196,8 @@ class MainWindow(QMainWindow):
         m_help.addAction(self._act(t("upd.check_now"), lambda: self.check_updates(quiet=False),
                                    icon="download"))
         m_help.addAction(self._act(t("upd.set_server"), self.set_update_server, icon="globe"))
+        m_help.addAction(self._act(t("new.menu"), lambda: self.show_whats_new(all_versions=True),
+                                   icon="sticky-note"))
         m_help.addSeparator()
         m_help.addAction(self._act(t("help.about"), self.show_about, icon="info"))
         self._refresh_tool_panel()
@@ -1219,6 +1226,159 @@ class MainWindow(QMainWindow):
         self.act_fullscreen.setToolTip(self.act_fullscreen.text())
         if full:
             QTimer.singleShot(150, self.viewer.fit_page)     # จอใหญ่ขึ้น -> ย่อให้เห็นทั้งหน้า
+
+    # ---------------- เปรียบเทียบเอกสาร (2.3) ----------------
+
+    def compare_dialog(self) -> None:
+        """เทียบไฟล์ที่เปิดอยู่ (ฉบับเดิม) กับอีกไฟล์ (ฉบับใหม่) -> รายงานวางคู่กันเปิดเป็นแท็บใหม่"""
+        if not self.doc or not self.doc.page_count:
+            return
+        other, _ = QFileDialog.getOpenFileName(self, t("cmpdoc.pick"), "", PDF_FILTER)
+        if not other:
+            return
+        import tempfile
+        folder = Path(tempfile.mkdtemp(prefix="ballcar-compare-"))
+        name = self.doc.path.stem if self.doc.path else "document"
+        old_file = folder / f"{name}.pdf"
+        with self.doc.flattened() as flat:            # รวมสิ่งที่แก้ไว้แต่ยังไม่บันทึกด้วย
+            flat.save(str(old_file))
+        target = folder / t("cmpdoc.file", a=name, b=Path(other).stem)
+
+        def report(done, total):
+            self.statusBar().showMessage(t("cmpdoc.progress", done=done, total=total), 0)
+            QApplication.processEvents()
+
+        labels = {k: t(f"cmpdoc.{k}") for k in ("old", "new", "changes", "same", "missing", "page")}
+        self._busy(t("cmpdoc.progress", done=0, total="…"))
+        try:
+            out, total = compare.compare_files(old_file, other, target, labels, progress=report)
+        except Exception as exc:
+            QMessageBox.critical(self, t("cmpdoc.menu"), str(exc))
+            return
+        finally:
+            self._done_busy()
+        self._open_path(str(out))
+        message = t("cmpdoc.done", n=total) if total else t("cmpdoc.done_same")
+        if total == 0 and not any(self.doc.page_text(i).strip() for i in range(self.doc.page_count)):
+            message = t("cmpdoc.no_text")
+        self.statusBar().showMessage(message, 12000)
+
+    # ---------------- หน้าตั้งค่ารวม (2.3) ----------------
+
+    def settings_dialog(self) -> None:
+        """รวมการตั้งค่าที่เคยกระจายหลายเมนูไว้ที่เดียว"""
+        from PySide6.QtWidgets import QCheckBox, QComboBox, QDialogButtonBox, QFormLayout
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(t("settings.title"))
+        dialog.setMinimumWidth(480)
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        mode = QComboBox()
+        for key in theme.MODES:
+            mode.addItem(t(f"theme.mode.{key}"), key)
+        mode.setCurrentIndex(max(0, mode.findData(theme.saved_mode())))
+        accent = QComboBox()
+        for key, color in theme.ACCENTS.items():
+            accent.addItem(theme.swatch_icon(color, False), t(f"theme.accent.{key}"), key)
+        current_accent = theme.saved_accent()
+        if accent.findData(current_accent) < 0:
+            accent.addItem(t("theme.accent.custom"), current_accent)
+        accent.setCurrentIndex(max(0, accent.findData(current_accent)))
+        colored = QCheckBox(t("theme.colored_icons"))
+        colored.setChecked(theme.colored_icons())
+        language = QComboBox()
+        language.addItem("ไทย", "th")
+        language.addItem("English", "en")
+        language.setCurrentIndex(max(0, language.findData(i18n.current())))
+        author = QLineEdit(i18n.get_setting("note_author", "") or "")
+        author.setPlaceholderText(pdfops.default_author() or t("settings.author_hint"))
+        server = QLineEdit(i18n.get_setting("update_url", "") or "")
+        server.setPlaceholderText(updater.DEFAULT_UPDATE_URL)
+        tools = QCheckBox(t("view.show_tools"))
+        tools.setChecked(self.tool_panel.isVisible())
+        form.addRow(t("settings.theme"), mode)
+        form.addRow(t("settings.accent"), accent)
+        form.addRow("", colored)
+        form.addRow(t("settings.language"), language)
+        form.addRow(t("settings.author"), author)
+        form.addRow(t("settings.server"), server)
+        form.addRow("", tools)
+        layout.addLayout(form)
+
+        more = QHBoxLayout()
+        for label, slot in ((t("tools.ocr_fixes"), self.ocr_fixes_dialog),
+                            (t("lib.manage").lstrip("⚙ "), self.manage_signatures),
+                            (t("new.menu"), lambda: self.show_whats_new(all_versions=True))):
+            b = QPushButton(label)
+            b.clicked.connect(slot)
+            more.addWidget(b)
+        layout.addLayout(more)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        i18n.set_setting("note_author", author.text().strip())
+        if server.text().strip() != (i18n.get_setting("update_url", "") or ""):
+            i18n.set_setting("update_url", updater.normalize_base_url(server.text().strip())
+                             if server.text().strip() else "")
+        if tools.isChecked() != self.tool_panel.isVisible():
+            self._toggle_tool_panel(tools.isChecked())
+        theme_changed = (mode.currentData() != theme.saved_mode()
+                         or accent.currentData() != theme.saved_accent()
+                         or colored.isChecked() != theme.colored_icons())
+        if language.currentData() != i18n.current():
+            if theme_changed:
+                theme.save(mode=mode.currentData(), accent=accent.currentData(),
+                           colored=colored.isChecked())
+                theme.apply(QApplication.instance())
+            self.change_language(language.currentData())     # สร้างเมนูใหม่ทั้งหมดอยู่แล้ว
+        elif theme_changed:
+            self.change_theme(mode=mode.currentData(), accent=accent.currentData(),
+                              colored=colored.isChecked())
+        self.statusBar().showMessage(t("settings.saved"), 5000)
+
+    # ---------------- มีอะไรใหม่ (2.3) ----------------
+
+    def maybe_show_whats_new(self) -> None:
+        """เปิดโปรแกรมครั้งแรกหลังอัปเดต — บอกของใหม่ครั้งเดียว"""
+        sections = whatsnew.pending(APP_VERSION)
+        if sections:
+            self.show_whats_new(sections=sections)
+
+    def show_whats_new(self, sections=None, all_versions: bool = False) -> None:
+        from PySide6.QtWidgets import QDialogButtonBox, QScrollArea
+
+        if all_versions:
+            sections = whatsnew.notes_since("0.0", APP_VERSION)
+        if not sections:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(t("new.title", v=APP_VERSION))
+        dialog.resize(560, 460)
+        layout = QVBoxLayout(dialog)
+        head = QLabel(t("new.head"))
+        head.setProperty("role", "title")
+        layout.addWidget(head)
+        body = QLabel(whatsnew.to_html(sections))
+        body.setWordWrap(True)
+        body.setTextFormat(Qt.RichText)
+        body.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setWidget(body)
+        layout.addWidget(scroll, 1)
+        buttons = QDialogButtonBox()
+        ok = buttons.addButton(t("new.ok"), QDialogButtonBox.AcceptRole)
+        ok.setProperty("role", "primary")
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec()
+        whatsnew.mark_seen(APP_VERSION)
 
     def _show_home(self, show: bool) -> None:
         """สลับระหว่างหน้าแรก (ยังไม่เปิดไฟล์) กับหน้าเอกสาร"""
@@ -1314,7 +1474,7 @@ class MainWindow(QMainWindow):
         self.home.set_texts(title=t("home.title"), subtitle=t("home.subtitle"),
                             recent=t("home.recent"), clear=t("home.clear"),
                             empty=t("home.empty"), remove=t("home.remove"),
-                            folder=t("home.folder"))
+                            folder=t("home.folder"), pin=t("home.pin"), unpin=t("home.unpin"))
         self.home.set_actions([
             (self.act_open, t("home.open"), t("home.open_detail")),
             (actions[t("tools.merge")], t("home.merge"), t("home.merge_detail")),
@@ -1334,13 +1494,13 @@ class MainWindow(QMainWindow):
         groups = [
             (t("group.edit"), [self.act_add_text, self.act_edit_text, self.act_highlight,
                                self.act_markup, self.act_erase, self.act_add_note,
-                               *pick("tools.signature", "tools.insert_image", "tools.fill_form",
+                               *pick("tools.signature", "stamp.menu", "tools.insert_image", "tools.fill_form",
                                      "tools.watermark_text", "tools.watermark_image")]),
             (t("group.pages"), pick("pages.insert_blank", "pages.insert_pdf", "pages.delete",
                                     "pages.move_up", "pages.move_down", "pages.rotate_left",
                                     "pages.rotate_right", "pages.rotate_180", "pages.crop",
                                     "tools.page_numbers")),
-            (t("group.files"), pick("tools.merge", "tools.split", "tools.compress",
+            (t("group.files"), pick("tools.merge", "tools.split", "tools.compress", "cmpdoc.menu",
                                     "tools.batch")),
             (t("group.convert"), pick("tools.to_word", "tools.to_excel", "tools.ocr", "tools.ocr_fixes",
                                       "tools.save_images", "tools.extract_text",
@@ -3240,6 +3400,15 @@ class MainWindow(QMainWindow):
             empty.setEnabled(False)
             self.sig_menu.addSeparator()
 
+        draw = self.sig_menu.addAction(icons.icon("pen-tool"), t("sig.draw_menu"))
+        draw.triggered.connect(self.draw_signature)
+        crop = self.sig_menu.addAction(icons.icon("crop"), t("sig.crop_menu"))
+        crop.setEnabled(has_doc)
+        crop.triggered.connect(self.capture_signature_mode)
+        stamp = self.sig_menu.addAction(icons.icon("signature"), t("stamp.menu"))
+        stamp.setEnabled(has_doc)
+        stamp.triggered.connect(self.stamp_dialog)
+        self.sig_menu.addSeparator()
         add = self.sig_menu.addAction(t("lib.add"))
         add.triggered.connect(self.add_signature_to_library)
         once = self.sig_menu.addAction(t("lib.use_once"))
@@ -3248,6 +3417,54 @@ class MainWindow(QMainWindow):
         if saved:
             manage = self.sig_menu.addAction(t("lib.manage"))
             manage.triggered.connect(self.manage_signatures)
+
+    # ---------------- วาดลายเซ็น / ครอปจากหน้า / ตรายาง (2.3) ----------------
+
+    def draw_signature(self) -> None:
+        dialog = signtools.SignaturePadDialog(self)
+        if dialog.exec() != QDialog.Accepted or not dialog.result_path:
+            return
+        path = str(dialog.result_path)
+        if dialog.save_to_library.isChecked():
+            name = dialog.name.text().strip() or t("sig.default_name")
+            path = str(library.save_signature(path, name))
+            self.statusBar().showMessage(t("sig.saved", name=Path(path).stem), 6000)
+        if self.doc and self.doc.page_count:
+            self.use_saved_signature(path)
+
+    def capture_signature_mode(self) -> None:
+        """ลากกรอบคลุมลายเซ็นที่อยู่ในเอกสาร -> ตัดพื้นขาว -> เก็บเข้าคลัง"""
+        if not self.doc or not self.doc.page_count:
+            return
+        if self._organizing():
+            self.act_organize.setChecked(False)
+        self._leave_modes()
+        self.viewer.start_capture_drag()
+        self.statusBar().showMessage(t("sig.crop_hint"), 0)
+
+    def _on_signature_captured(self, page_index: int, rect) -> None:
+        self.statusBar().clearMessage()
+        path = self.doc.capture_region(page_index, rect)
+        if not path:
+            QMessageBox.information(self, t("sig.crop_menu"), t("sig.crop_empty"))
+            return
+        name, ok = QInputDialog.getText(self, t("sig.crop_menu"), t("sig.name_prompt"),
+                                        text=t("sig.default_name"))
+        if not ok:
+            return
+        saved = library.save_signature(path, name.strip() or t("sig.default_name"))
+        self.statusBar().showMessage(t("sig.saved", name=saved.stem), 8000)
+
+    def stamp_dialog(self) -> None:
+        if not self.doc or not self.doc.page_count:
+            return
+        dialog = signtools.StampDialog(self)
+        if dialog.exec() != QDialog.Accepted or not dialog.result_path:
+            return
+        path = str(dialog.result_path)
+        if dialog.save_to_library.isChecked():
+            path = str(library.save_signature(path, t("stamp.lib_name", text=dialog.result_text)))
+        self.use_saved_signature(path)
 
     def use_saved_signature(self, path) -> None:
         """คลิกลายเซ็นจากคลัง = เข้าโหมดวางทันที (รูปเตรียมไว้แล้วตอนบันทึกเข้าคลัง)"""
@@ -4134,7 +4351,8 @@ class MainWindow(QMainWindow):
         if not text:
             self.statusBar().clearMessage()
             return
-        xref = self.doc.add_note(page_index, fitz.Point(px, py), text)
+        xref = self.doc.add_note(page_index, fitz.Point(px, py), text,
+                                 author=i18n.get_setting("note_author", "") or "")
         self._refresh_all(keep_row=page_index)
         if self.comments_panel.isVisible():
             self._refresh_comments(select=(page_index, xref))
@@ -5339,6 +5557,8 @@ def main() -> None:
     # (ไม่บล็อกการเปิด · ต่อไม่ได้ก็เงียบ · ไม่ทำตอนเปิดจากไฟล์/รวมไฟล์)
     if not combine and not initial:
         QTimer.singleShot(1500, lambda: window.check_updates(quiet=True))
+    if not combine:
+        QTimer.singleShot(1200, window.maybe_show_whats_new)
 
     sys.exit(app.exec())
 

@@ -1744,6 +1744,31 @@ class PdfDocument:
         rgba.save(out, format="PNG")
         return str(out)
 
+    def capture_region(self, page_index: int, rect: fitz.Rect, dpi: int = 300) -> str | None:
+        """ครอปส่วนของหน้า (เช่นลายเซ็นในเอกสาร) เป็น PNG พื้นใส ตัดขอบว่างทิ้ง (2.3)
+        rect = พิกัดบนหน้าที่ผู้ใช้เห็น · คืน None ถ้ากรอบเล็กเกิน/ไม่มีอะไรนอกจากพื้นขาว"""
+        from PIL import Image
+
+        rect = fitz.Rect(rect).normalize()
+        if rect.width < 4 or rect.height < 4:
+            return None
+        page = self.doc.load_page(page_index)
+        pix = page.get_pixmap(clip=rect, dpi=dpi, alpha=False)
+        raw = Path(tempfile.gettempdir()) / f"ballcar-crop-{os.getpid()}-{time.time_ns()}.png"
+        pix.save(str(raw))
+        with Image.open(raw) as im:
+            rgba = _strip_white_background(im.convert("RGBA"))
+        box = rgba.getchannel("A").getbbox()
+        if box is None:
+            return None
+        pad = 6
+        box = (max(0, box[0] - pad), max(0, box[1] - pad),
+               min(rgba.width, box[2] + pad), min(rgba.height, box[3] + pad))
+        out = raw.with_name(raw.stem + "-sig.png")
+        rgba.crop(box).save(out, format="PNG")
+        raw.unlink(missing_ok=True)
+        return str(out)
+
     def add_stamp(self, page: int, image_path: str | Path, rect: fitz.Rect) -> Stamp:
         """เพิ่มลายเซ็นเป็นชั้นลอย (ยังย้าย/ย่อขยาย/ลบได้)"""
         self.push_undo()

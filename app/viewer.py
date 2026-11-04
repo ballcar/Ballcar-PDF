@@ -253,6 +253,7 @@ class PageViewer(QScrollArea):
     noteClicked = Signal(int, int)                # 2.2: คลิกไอคอนโน้ตบนหน้า (page, xref)
     noteEditRequested = Signal(int, int)          # ดับเบิลคลิกไอคอนโน้ต
     noteMoved = Signal(int, int, float, float)    # ลากไอคอนโน้ตไปวางใหม่ (page, xref, x, y มุมซ้ายบน)
+    captureDragged = Signal(int, object)          # 2.3: ลากกรอบครอปลายเซ็นจากหน้า (page, Rect)
     rectDragged = Signal(int, object)
     eraseDragged = Signal(int, object)
     annotDrawn = Signal(int, object)
@@ -291,6 +292,7 @@ class PageViewer(QScrollArea):
         self._drag_start: QPoint | None = None   # พิกเซลบนหน้า (เทียบมุมบนซ้ายหน้านั้น)
         self._drag_now: QPoint | None = None
         self._annotating = False
+        self._capturing = False               # 2.3: โหมดครอปลายเซ็น (ใช้กลไกลากกรอบเดียวกับยางลบ)
         self._note_drag: dict | None = None   # กำลังกด/ลากไอคอนโน้ต {page, xref, rect, grab, now, moved}
         self._hover_note: tuple | None = None
         self._annot_tool = "draw"
@@ -723,7 +725,10 @@ class PageViewer(QScrollArea):
         if (self._highlighting or self._erasing) and self._drag_page == i \
                 and self._drag_start is not None and self._drag_now is not None:
             painter.save()
-            if self._erasing:
+            if self._capturing:
+                painter.setPen(QPen(QColor(30, 110, 230), 2, Qt.DashLine))
+                painter.setBrush(QColor(30, 110, 230, 30))
+            elif self._erasing:
                 painter.setPen(QPen(QColor(200, 60, 60), 1, Qt.DashLine))
                 painter.setBrush(QColor(255, 255, 255, 200))
             else:
@@ -763,7 +768,13 @@ class PageViewer(QScrollArea):
         self._drag_now = None
         self._label.setCursor(Qt.CrossCursor)
 
+    def start_capture_drag(self) -> None:
+        """ลากกรอบคลุมลายเซ็น/ตราประทับบนหน้า เพื่อเก็บเข้าคลัง (ไม่แก้เอกสาร)"""
+        self.start_erase_drag()
+        self._capturing = True
+
     def stop_erase_drag(self) -> None:
+        self._capturing = False
         self._erasing = False
         self._drag_start = None
         self._drag_now = None
@@ -1008,7 +1019,10 @@ class PageViewer(QScrollArea):
             z = self.zoom
             rect = fitz.Rect(min(a.x(), b.x()) / z, min(a.y(), b.y()) / z,
                              max(a.x(), b.x()) / z, max(a.y(), b.y()) / z)
-            if erasing:
+            if self._capturing:
+                self.stop_erase_drag()           # ครอปครั้งเดียวจบ
+                self.captureDragged.emit(page, rect)
+            elif erasing:
                 self.eraseDragged.emit(page, rect)
             else:
                 self.rectDragged.emit(page, rect)

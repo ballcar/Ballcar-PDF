@@ -42,3 +42,36 @@ def items() -> list[Path]:
         except OSError:
             pass
     return found
+
+
+# ---------- ปักหมุด (2.3) — ไฟล์ที่ใช้ประจำ อยู่บนสุดของหน้าแรกเสมอ ไม่หลุดตามเวลา ----------
+
+_PIN_KEY = "pinned_files"
+
+
+def pinned() -> list[Path]:
+    """ไฟล์ที่ปักหมุดไว้และยังมีอยู่จริง (เรียงตามลำดับที่ปัก)"""
+    found = []
+    for p in i18n.get_setting(_PIN_KEY, []) or []:
+        try:
+            if Path(p).is_file():
+                found.append(Path(p))
+        except OSError:
+            pass
+    return found
+
+
+def is_pinned(path: str | os.PathLike) -> bool:
+    key = os.path.normcase(_norm(path))
+    return any(os.path.normcase(p) == key for p in i18n.get_setting(_PIN_KEY, []) or [])
+
+
+def pin(path: str | os.PathLike) -> None:
+    if not is_pinned(path):
+        i18n.set_setting(_PIN_KEY, [*(i18n.get_setting(_PIN_KEY, []) or []), _norm(path)])
+
+
+def unpin(path: str | os.PathLike) -> None:
+    key = os.path.normcase(_norm(path))
+    i18n.set_setting(_PIN_KEY, [p for p in i18n.get_setting(_PIN_KEY, []) or []
+                                if os.path.normcase(p) != key])

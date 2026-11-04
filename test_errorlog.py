@@ -59,8 +59,12 @@ print("OK  KeyboardInterrupt ไม่ถูกดัก")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import fitz
 from PySide6.QtWidgets import QApplication
+import app.main as _main
 from app.main import MainWindow, _notify_running_instance, _listen_single_instance
 from app.pdfops import PdfDocument
+
+# ช่องสื่อสารแยกเฉพาะเทสต์ — ไม่ไปคุยกับ Ballcar PDF ตัวจริงที่ผู้ใช้เปิดอยู่ในเครื่อง
+_main._SINGLE_INSTANCE_KEY = _main._SINGLE_INSTANCE_KEY + f"-test-{os.getpid()}"
 
 app = QApplication.instance() or QApplication(sys.argv)
 

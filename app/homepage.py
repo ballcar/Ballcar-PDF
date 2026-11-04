@@ -129,21 +129,31 @@ class HomePage(QWidget):
     def refresh(self) -> None:
         """อ่านรายการไฟล์ล่าสุดใหม่ (เรียกทุกครั้งที่หน้าแรกถูกแสดง)"""
         self.recent_list.clear()
-        files = recent.items()
+        pins = recent.pinned()
+        pinned_keys = {str(p).lower() for p in pins}
+        files = [p for p in recent.items() if str(p).lower() not in pinned_keys]
         from PySide6.QtWidgets import QApplication, QStyle
         icon = QApplication.style().standardIcon(QStyle.SP_FileIcon)
-        for path in files:
+        # ปักหมุดอยู่บนสุดเสมอ (📌 ตัวหนา) ตามด้วยไฟล์ล่าสุด
+        for path, is_pin in [*((p, True) for p in pins), *((p, False) for p in files)]:
             try:
                 when = time.strftime("%d/%m/%Y %H:%M", time.localtime(path.stat().st_mtime))
             except OSError:
                 when = ""
-            item = QListWidgetItem(icon, f"{path.name}\n{path.parent}   ·   {when}")
+            title = ("📌 " if is_pin else "") + path.name
+            item = QListWidgetItem(icon, f"{title}\n{path.parent}   ·   {when}")
             item.setData(Qt.UserRole, str(path))
+            item.setData(Qt.UserRole + 1, is_pin)
             item.setToolTip(str(path))
+            if is_pin:
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
             self.recent_list.addItem(item)
-        self.recent_list.setVisible(bool(files))
+        has = bool(pins or files)
+        self.recent_list.setVisible(has)
         self.clear_button.setVisible(bool(files))
-        self.empty.setVisible(not files)
+        self.empty.setVisible(not has)
 
     def _open_item(self, item: QListWidgetItem) -> None:
         self.open_requested.emit(item.data(Qt.UserRole))
@@ -152,11 +162,18 @@ class HomePage(QWidget):
         item = self.recent_list.itemAt(pos)
         if not item:
             return
+        path = item.data(Qt.UserRole)
         menu = QMenu(self)
-        menu.addAction(self._texts.get("remove", "Remove"),
-                       lambda: (recent.remove(item.data(Qt.UserRole)), self.refresh()))
+        if item.data(Qt.UserRole + 1):
+            menu.addAction(self._texts.get("unpin", "Unpin"),
+                           lambda: (recent.unpin(path), self.refresh()))
+        else:
+            menu.addAction(self._texts.get("pin", "Pin"),
+                           lambda: (recent.pin(path), self.refresh()))
+            menu.addAction(self._texts.get("remove", "Remove"),
+                           lambda: (recent.remove(path), self.refresh()))
         menu.addAction(self._texts.get("folder", "Open folder"),
-                       lambda: _reveal(item.data(Qt.UserRole)))
+                       lambda: _reveal(path))
         menu.exec(self.recent_list.mapToGlobal(pos))
 
     def _clear_recent(self) -> None:
