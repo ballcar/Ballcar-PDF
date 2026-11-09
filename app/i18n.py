@@ -558,10 +558,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "form.none_title": "ไม่มีแบบฟอร์ม",
         "form.none": "ไฟล์นี้ไม่มีช่องกรอกแบบฟอร์ม (AcroForm)\n"
                      "ถ้าอยากเติมข้อความลงไป ใช้เมนู 'เพิ่มข้อความ' แทนได้",
-        "form.thai_tip": "💡 ช่องฟอร์มมาตรฐานใช้ฟอนต์ที่ไม่มีภาษาไทย — "
-                         "ถ้ากรอกภาษาไทย แนะนำ 'กรอกแล้วตรึง' เพื่อให้แสดงผลถูกต้อง",
+        "form.thai_tip": "💡 คลิกช่องบนหน้าเอกสารแล้วพิมพ์ได้เลย (Tab = ช่องถัดไป) — "
+                         "'กรอกแล้วตรึง' = ล็อกค่าไว้ ไม่ให้ใครแก้ต่อ",
+        "form.hint": "📝 ไฟล์นี้เป็นแบบฟอร์ม — คลิกช่องสีฟ้าแล้วพิมพ์ได้เลย · คลิกช่องติ๊กเพื่อติ๊ก · "
+                     "Tab = ช่องถัดไป · Enter = เสร็จ",
         "form.fill_editable": "กรอก (ฟอร์มยังแก้ได้)",
-        "form.fill_flatten": "กรอกแล้วตรึง (แนะนำสำหรับไทย)",
+        "form.fill_flatten": "กรอกแล้วตรึง (แก้ต่อไม่ได้)",
         "form.fill_failed": "กรอกฟอร์มไม่สำเร็จ",
         "form.filled": "กรอก {n} ช่องแล้ว — อย่าลืมบันทึก",
 
@@ -1201,10 +1203,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "form.none_title": "No Form",
         "form.none": "This file has no fillable form fields (AcroForm).\n"
                      "Use 'Add Text' if you want to place text on it.",
-        "form.thai_tip": "💡 Standard form fields use a font without Thai glyphs — "
-                         "for Thai values, use 'Fill & Flatten' so they display correctly.",
+        "form.thai_tip": "💡 You can also click a field on the page and type (Tab = next field). "
+                         "'Fill & Flatten' locks the values so nobody can edit them.",
+        "form.hint": "📝 This file is a form — click a blue field and type · click a checkbox to tick · "
+                     "Tab = next field · Enter = done",
         "form.fill_editable": "Fill (keep editable)",
-        "form.fill_flatten": "Fill & Flatten (best for Thai)",
+        "form.fill_flatten": "Fill & Flatten (locked)",
         "form.fill_failed": "Failed to fill form",
         "form.filled": "Filled {n} field(s) — remember to save",
 

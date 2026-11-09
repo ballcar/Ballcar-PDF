@@ -11,10 +11,11 @@
 from __future__ import annotations
 
 import fitz
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QColor, QFont, QFontDatabase, QImage, QMouseEvent,
                            QPainter, QPen, QPixmap)
-from PySide6.QtWidgets import QLabel, QScrollArea, QToolTip, QWidget
+from PySide6.QtWidgets import (QComboBox, QLabel, QLineEdit, QPlainTextEdit, QScrollArea,
+                               QToolTip, QWidget)
 from html import escape as html_escape
 
 from .pdfops import (PdfDocument, SearchHit, TextBox, find_thai_font,
@@ -242,6 +243,65 @@ class _Canvas(QWidget):
         self.v.contextRequested.emit(self.mapTo(self.v, e.pos()))
 
 
+def _commit_if_left(editor) -> None:
+    """คลิกไปที่อื่น = เก็บค่า — รอให้โฟกัสนิ่งก่อน (ตอนสลับช่องด้วย Tab โฟกัสจะกระโดดชั่วขณะ)"""
+    def check() -> None:
+        ed = editor.v._field_editor
+        if ed is not None and ed["widget"] is editor and not editor.hasFocus():
+            editor.v.close_field_editor(commit=True)
+    QTimer.singleShot(0, check)
+
+
+class _FieldLine(QLineEdit):
+    """ช่องพิมพ์บรรทัดเดียวที่ลอยทับช่องกรอก — Enter/คลิกที่อื่น = เก็บ · Esc = ยกเลิก · Tab = ช่องถัดไป"""
+
+    def __init__(self, viewer: "PageViewer") -> None:
+        super().__init__()
+        self.v = viewer
+
+    def keyPressEvent(self, e) -> None:
+        if e.key() == Qt.Key_Escape:
+            self.v.close_field_editor(commit=False)
+        elif e.key() in (Qt.Key_Tab, Qt.Key_Backtab):
+            self.v.close_field_editor(commit=True, move=-1 if e.key() == Qt.Key_Backtab else 1)
+        else:
+            super().keyPressEvent(e)
+
+    def focusNextPrevChild(self, nxt: bool) -> bool:   # ไม่ให้ Qt แย่ง Tab ไปเลื่อนโฟกัสเอง
+        return False
+
+    def focusOutEvent(self, e) -> None:
+        super().focusOutEvent(e)
+        if e.reason() not in (Qt.PopupFocusReason, Qt.ActiveWindowFocusReason):
+            _commit_if_left(self)
+
+
+class _FieldText(QPlainTextEdit):
+    """ช่องพิมพ์หลายบรรทัด — Enter ขึ้นบรรทัดใหม่ · Ctrl+Enter/คลิกที่อื่น = เก็บ · Esc = ยกเลิก"""
+
+    def __init__(self, viewer: "PageViewer") -> None:
+        super().__init__()
+        self.v = viewer
+
+    def keyPressEvent(self, e) -> None:
+        if e.key() == Qt.Key_Escape:
+            self.v.close_field_editor(commit=False)
+        elif e.key() in (Qt.Key_Return, Qt.Key_Enter) and e.modifiers() & Qt.ControlModifier:
+            self.v.close_field_editor(commit=True)
+        elif e.key() in (Qt.Key_Tab, Qt.Key_Backtab):
+            self.v.close_field_editor(commit=True, move=-1 if e.key() == Qt.Key_Backtab else 1)
+        else:
+            super().keyPressEvent(e)
+
+    def focusNextPrevChild(self, nxt: bool) -> bool:
+        return False
+
+    def focusOutEvent(self, e) -> None:
+        super().focusOutEvent(e)
+        if e.reason() not in (Qt.PopupFocusReason, Qt.ActiveWindowFocusReason):
+            _commit_if_left(self)
+
+
 class PageViewer(QScrollArea):
     stampSelected = Signal()
     stampEditRequested = Signal()
@@ -254,6 +314,7 @@ class PageViewer(QScrollArea):
     noteEditRequested = Signal(int, int)          # ดับเบิลคลิกไอคอนโน้ต
     noteMoved = Signal(int, int, float, float)    # ลากไอคอนโน้ตไปวางใหม่ (page, xref, x, y มุมซ้ายบน)
     captureDragged = Signal(int, object)          # 2.3: ลากกรอบครอปลายเซ็นจากหน้า (page, Rect)
+    formEdited = Signal()                         # 2.3.1: กรอก/ติ๊กช่องฟอร์มบนหน้าแล้ว
     rectDragged = Signal(int, object)
     eraseDragged = Signal(int, object)
     annotDrawn = Signal(int, object)
@@ -295,6 +356,9 @@ class PageViewer(QScrollArea):
         self._capturing = False               # 2.3: โหมดครอปลายเซ็น (ใช้กลไกลากกรอบเดียวกับยางลบ)
         self._note_drag: dict | None = None   # กำลังกด/ลากไอคอนโน้ต {page, xref, rect, grab, now, moved}
         self._hover_note: tuple | None = None
+        self._form_cache: dict[int, list] = {}  # 2.3.1: ช่องกรอกของแต่ละหน้า (ไว้ระบายสี/คลิกกรอก)
+        self._field_editor = None               # ช่องพิมพ์ที่ลอยทับช่องกรอกอยู่ {widget, info}
+        self._hover_field = False
         self._annot_tool = "draw"
         self._annot_color = (0.9, 0.1, 0.1)
         self._annot_width = 2.0
@@ -499,6 +563,8 @@ class PageViewer(QScrollArea):
     # ---------- เอกสาร / นำทาง ----------
 
     def set_document(self, doc: PdfDocument | None) -> None:
+        self.close_field_editor(commit=True)
+        self._form_cache.clear()
         self.doc = doc
         self.index = 0
         self.highlights = []
@@ -522,6 +588,7 @@ class PageViewer(QScrollArea):
         # จำหน้าปัจจุบัน + ตำแหน่งกรอบตัวอย่างเป็นพิกัดบนหน้า แล้ววางกลับหลังเปลี่ยนซูม
         anchor = self.index
         page_rect = self.placement_rect() if self.overlay is not None else None
+        self.close_field_editor(commit=True)
         self.zoom = max(ZOOM_MIN, min(ZOOM_MAX, zoom))
         self._cache.clear()
         self._relayout()
@@ -561,6 +628,9 @@ class PageViewer(QScrollArea):
             self.index = min(self.index, self.doc.page_count - 1)
         self._cache.clear()
         self._words_cache.clear()      # เนื้อหาอาจเปลี่ยน ต้องอ่านคำใหม่
+        self._form_cache.clear()
+        if self._field_editor is not None and not self._field_editor.get("busy"):
+            self.close_field_editor(commit=False)    # เอกสารเปลี่ยน (เช่น ย้อนกลับ) ช่องพิมพ์เดิมไม่ตรงแล้ว
         self._relayout()
         self._label.update()
 
@@ -625,6 +695,18 @@ class PageViewer(QScrollArea):
         """วาดของที่ยังลอยอยู่ (ไฮไลต์/ยางลบ/ลายเซ็น/ข้อความ/ลายน้ำ/มาร์กอัป) ของหน้า i"""
         z = self.zoom
         ox, oy = g.x(), g.y()
+
+        # ช่องกรอกฟอร์ม: ระบายฟ้าอ่อนแบบ Chrome ให้รู้ว่าคลิกกรอกได้
+        fields = self._fields(i)
+        if fields:
+            painter.save()
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(204, 215, 255, 110))
+            for f in fields:
+                r = f["rect"]
+                painter.drawRect(int(ox + r.x0 * z), int(oy + r.y0 * z),
+                                 max(1, int(r.width * z)), max(1, int(r.height * z)))
+            painter.restore()
 
         # แถบข้อความที่กำลังเลือกอยู่ (ลากเลือกเพื่อคัดลอก)
         if self._sel_page == i and self._sel_rects:
@@ -866,6 +948,8 @@ class PageViewer(QScrollArea):
     # ---------- จัดการเมาส์ (พิกัดบนแคนวาส) ----------
 
     def _dispatch_press(self, canvas_pt: QPoint, button) -> None:
+        if self._field_editor is not None:     # คลิกที่อื่นบนหน้า = เก็บค่าช่องที่พิมพ์ค้างไว้
+            self.close_field_editor(commit=True)
         if self.placing or not self.doc or button != Qt.LeftButton:
             return
         idx, px, py = self._page_at(canvas_pt)
@@ -898,6 +982,12 @@ class PageViewer(QScrollArea):
         tb = self.doc.textbox_at(idx, point)
         stamp = self.doc.stamp_at(idx, point)
         note = self.doc.note_at(idx, point) if tb is None and stamp is None else None
+        field = (self._field_at(idx, point)
+                 if tb is None and stamp is None and note is None else None)
+        if field is not None:           # 2.3.1: คลิกช่องกรอก = พิมพ์ได้เลย / ติ๊กช่อง
+            self.clear_selection()
+            self.activate_field(field)
+            return
         if note is not None:            # กดไอคอนโน้ต: ปล่อยเลย = ดูข้อความ, ลากไป = ย้าย
             self._note_drag = {"page": idx, "xref": note, "grab": (px, py), "now": (px, py),
                                "rect": self.doc.note_info(idx, note)["rect"], "moved": False}
@@ -963,6 +1053,16 @@ class PageViewer(QScrollArea):
             return
         idx, px, py = self._page_at(canvas_pt)
         note = self.doc.note_at(idx, fitz.Point(px, py))
+        field = self._field_at(idx, fitz.Point(px, py)) if note is None else None
+        if field is not None:
+            if not self._hover_field:
+                self._hover_field = True
+                text_like = field["type"] == fitz.PDF_WIDGET_TYPE_TEXT
+                self._label.setCursor(Qt.IBeamCursor if text_like else Qt.PointingHandCursor)
+            return
+        if self._hover_field:
+            self._hover_field = False
+            self._label.unsetCursor()
         if note is None:
             if self._hover_note is not None:
                 self._hover_note = None
@@ -973,6 +1073,140 @@ class PageViewer(QScrollArea):
             self._hover_note = (idx, note)
             self._label.setCursor(Qt.OpenHandCursor)
             self.show_note_text(idx, note, self._label.mapToGlobal(canvas_pt))
+
+    # ---------- 2.3.1 กรอกฟอร์มบนหน้า ----------
+
+    def _fields(self, page: int) -> list:
+        if not self.doc or not getattr(self.doc.doc, "is_form_pdf", False):
+            return []
+        # บันทึกไฟล์ (garbage) จะจัดเลข xref ใหม่ในหน่วยความจำด้วย -> จำนวน xref เปลี่ยน = อ่านช่องใหม่
+        key = self.doc.doc.xref_length()
+        if self._form_cache.get("key") != key:
+            self._form_cache = {"key": key}
+        if page not in self._form_cache:
+            try:
+                self._form_cache[page] = self.doc.form_widgets_on(page)
+            except Exception:
+                self._form_cache[page] = []
+        return self._form_cache[page]
+
+    def _field_at(self, page: int, point: fitz.Point):
+        for f in self._fields(page):
+            if f["rect"].contains(point) and not f["readonly"]:
+                return f
+        return None
+
+    @staticmethod
+    def _is_check(field: dict) -> bool:
+        return field["type"] in (fitz.PDF_WIDGET_TYPE_CHECKBOX, fitz.PDF_WIDGET_TYPE_RADIOBUTTON)
+
+    def activate_field(self, field: dict) -> None:
+        """คลิกช่อง: ติ๊ก/เลือก = สลับทันที · ช่องข้อความ/ตัวเลือก = เปิดช่องพิมพ์ทับตรงนั้น"""
+        self.close_field_editor(commit=True)
+        if self._is_check(field):
+            if self.doc.toggle_form_field(field["page"], field["xref"]):
+                self.refresh()
+                self.formEdited.emit()
+            return
+        self._open_field_editor(field)
+
+    def _open_field_editor(self, field: dict) -> None:
+        self._ensure_layout()
+        page = field["page"]
+        if not (0 <= page < len(self._geoms)):
+            return
+        g = self._geoms[page]
+        z = self.zoom
+        r = field["rect"]
+        box = QRect(int(g.x() + r.x0 * z), int(g.y() + r.y0 * z),
+                    max(24, int(r.width * z)), max(14, int(r.height * z)))
+        value = "" if field["value"] in (None, False) else str(field["value"])
+        font = QFont(self._label.font())
+        size = field["font_size"] or min(12.0, r.height * 0.7)
+        font.setPixelSize(max(9, int(size * z * 1.15)))
+        kind = field["type"]
+        if kind in (fitz.PDF_WIDGET_TYPE_COMBOBOX, fitz.PDF_WIDGET_TYPE_LISTBOX) and field["choices"]:
+            editor = QComboBox(self._label)
+            editor.setEditable(kind == fitz.PDF_WIDGET_TYPE_COMBOBOX)
+            for c in field["choices"]:
+                editor.addItem(c[1] if isinstance(c, (list, tuple)) else str(c))
+            editor.setCurrentText(value)
+            editor.activated.connect(lambda _i: self.close_field_editor(commit=True))
+        elif field["multiline"]:
+            editor = _FieldText(self)
+            editor.setParent(self._label)
+            editor.setPlainText(value)
+        else:
+            editor = _FieldLine(self)
+            editor.setParent(self._label)
+            editor.setText(value)
+            editor.selectAll()
+            editor.returnPressed.connect(lambda: self.close_field_editor(commit=True))
+        editor.setFont(font)
+        editor.setObjectName("formFieldEditor")
+        editor.setStyleSheet("#formFieldEditor { background: #fffbe6; color: black;"
+                             " border: 2px solid #3378ff; padding: 0 2px; }")
+        editor.setGeometry(box)
+        self._field_editor = {"widget": editor, "info": field, "start": value}
+        editor.show()
+        editor.setFocus()
+        self.ensureVisible(box.center().x(), box.center().y(), 50, 50)
+
+    def field_editor_text(self) -> str | None:
+        ed = self._field_editor
+        if ed is None:
+            return None
+        w = ed["widget"]
+        if isinstance(w, QComboBox):
+            return w.currentText()
+        if isinstance(w, QPlainTextEdit):
+            return w.toPlainText()
+        return w.text()
+
+    def close_field_editor(self, commit: bool = True, move: int = 0) -> None:
+        """ปิดช่องพิมพ์ — commit=True เก็บค่าลงเอกสาร · move=+1/-1 ไปช่องถัดไป/ก่อนหน้า (Tab)"""
+        ed = self._field_editor
+        if ed is None or ed.get("busy"):
+            return
+        ed["busy"] = True
+        text = self.field_editor_text()
+        info = ed["info"]
+        fresh = [f for f in self._fields(info["page"])
+                 if f["name"] == info["name"] and f["rect"] == info["rect"]]
+        if fresh:                       # เผื่อบันทึกไฟล์ระหว่างพิมพ์ (เลข xref เปลี่ยน)
+            info = fresh[0]
+        changed = commit and text is not None and text != ed["start"]
+        if changed:
+            self.doc.set_form_field(info["page"], info["xref"], text)
+        self._field_editor = None
+        w = ed["widget"]
+        w.hide()
+        w.deleteLater()
+        if changed:
+            self.refresh()
+            self.formEdited.emit()
+        target = self._neighbour_field(info, move) if move else None
+        # Tab ข้ามช่องติ๊ก (ติ๊กต้องคลิกเอง) ไปช่องพิมพ์ถัดไป
+        while target is not None and self._is_check(target):
+            target = self._neighbour_field(target, move)
+        if target is not None:
+            self.index = target["page"]
+            self._open_field_editor(target)
+        else:
+            self.setFocus()
+
+    def _neighbour_field(self, info: dict, step: int):
+        """ช่องถัดไปตามลำดับ Tab (ลำดับในไฟล์) ข้ามไปหน้าถัดไปได้"""
+        order = []
+        for page in range(self.doc.page_count):
+            order.extend(f for f in self._fields(page) if not f["readonly"])
+        keys = [(f["page"], f["xref"]) for f in order]
+        try:
+            i = keys.index((info["page"], info["xref"]))
+        except ValueError:
+            return None
+        j = i + step
+        return order[j] if 0 <= j < len(order) else None
 
     def show_note_text(self, page: int, xref: int, global_pt) -> None:
         info = self.doc.note_info(page, xref)

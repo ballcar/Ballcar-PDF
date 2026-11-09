@@ -592,6 +592,24 @@ def draw_textbox(page: fitz.Page, box: "TextBox") -> None:
     )
 
 
+def _view_to_page(page: fitz.Page, view_point) -> fitz.Point:
+    point = fitz.Point(view_point)
+    return point * page.derotation_matrix if page.rotation else point
+
+
+def insert_view_text(page: fitz.Page, view_point, text: str, angle: float | None = None,
+                     **kwargs) -> None:
+    """เขียนข้อความตรงจุดบนหน้าที่ผู้ใช้เห็น (หน้าที่ถูกหมุนไว้ก็อ่านได้ตรง ไม่ตะแคง/ไม่หลุดหน้า)
+    angle = เอียงข้อความรอบจุดนั้น (องศา) เช่นลายน้ำ"""
+    rot = (page.rotation or 0) % 360
+    if rot not in (0, 90, 180, 270):
+        rot = 0
+    point = fitz.Point(view_point) * page.derotation_matrix if rot else fitz.Point(view_point)
+    if angle is not None:
+        kwargs["morph"] = (point, fitz.Matrix(angle))
+    page.insert_text(point, text, rotate=rot, **kwargs)
+
+
 def compress_pdf(doc: fitz.Document, target: str | Path,
                  image_quality: int = 60, downsample_dpi: int = 120) -> int:
     """บีบอัดเอกสารลง target — คืนขนาดไฟล์ใหม่ (bytes)"""
@@ -1553,7 +1571,8 @@ class PdfDocument:
             else:
                 x = (rect.width - width) / 2
 
-            page.insert_text((x, y), text, fontname=fontname, fontsize=font_size)
+            # x, y เป็นพิกัดที่ผู้ใช้เห็น -> หน้าที่หมุนไว้ (ไฟล์สแกนแนวนอน) เลขหน้าไม่หลุด/ไม่ตะแคง
+            insert_view_text(page, (x, y), text, fontname=fontname, fontsize=font_size)
         self.dirty = True
 
     # ---------- ลายน้ำ / ลายเซ็น ----------
@@ -1614,12 +1633,10 @@ class PdfDocument:
             width = font.text_length(text, fontsize=size)
             start = fitz.Point(center.x - width / 2, center.y + size * 0.35)
 
-            page.insert_text(
-                start, text,
-                fontname=fontname, fontsize=size, color=color,
-                fill_opacity=opacity,
-                morph=(center, fitz.Matrix(angle)),
-            )
+            insert_view_text(page, start, text, angle=None,
+                             fontname=fontname, fontsize=size, color=color,
+                             fill_opacity=opacity,
+                             morph=(_view_to_page(page, center), fitz.Matrix(angle)))
         self.dirty = True
 
     @contextmanager
@@ -1710,12 +1727,10 @@ class PdfDocument:
             fontname, _ = self._register_font(page, wm.text)
             center = fitz.Point(cx, cy)
             start = fitz.Point(cx - width / 2, cy + size * 0.35)
-            page.insert_text(
-                start, wm.text,
-                fontname=fontname, fontsize=size, color=wm.color,
-                fill_opacity=wm.opacity,
-                morph=(center, fitz.Matrix(wm.angle)),
-            )
+            insert_view_text(page, start, wm.text,
+                             fontname=fontname, fontsize=size, color=wm.color,
+                             fill_opacity=wm.opacity,
+                             morph=(_view_to_page(page, center), fitz.Matrix(wm.angle)))
 
     # ---------- ลายเซ็นแบบแก้ไขได้ ----------
 
@@ -1940,7 +1955,7 @@ class PdfDocument:
             # keep_proportion=False: ฝังเต็มกรอบเท่าที่เห็นบนจอ (ค่าเริ่มต้นคงสัดส่วนรูปเดิม
             # แล้วจัดกึ่งกลาง -> รูปที่ถูกยืด/บีบจะเล็กลงและเลื่อนจากที่วางไว้)
             page.insert_image(target, filename=stamp.image_path, overlay=True, alpha=-1,
-                              keep_proportion=False)
+                              keep_proportion=False, rotate=page.rotation % 360)
 
     # ---------- ข้อความแบบแก้ไขได้ (เพิ่ม/แก้) ----------
 
@@ -2199,7 +2214,8 @@ class PdfDocument:
         target = rect * page.derotation_matrix if page.rotation else rect
         # alpha=-1 = ใช้ความโปร่งใสที่มากับไฟล์รูป (PNG ลายเซ็นพื้นหลังใสจะไม่มีกรอบขาว)
         page.insert_image(target, filename=str(image_path), overlay=True, alpha=-1,
-                          keep_proportion=False)    # เต็มกรอบเท่าที่เห็น (ดู _flatten_stamps)
+                          keep_proportion=False,    # เต็มกรอบเท่าที่เห็น (ดู _flatten_stamps)
+                          rotate=page.rotation % 360)   # หน้าที่หมุนไว้: รูปตั้งตรงตามที่เห็น
         self.dirty = True
 
     def add_image_watermark(
@@ -2222,7 +2238,7 @@ class PdfDocument:
             box = fitz.Rect(cx - width / 2, cy - height / 2, cx + width / 2, cy + height / 2)
             page.insert_image(
                 box * page.derotation_matrix if page.rotation else box,
-                filename=str(image_path), overlay=True, alpha=-1,
+                filename=str(image_path), overlay=True, alpha=-1, rotate=page.rotation % 360,
             )
         self.dirty = True
 
@@ -2713,16 +2729,151 @@ class PdfDocument:
                 })
         return fields
 
+    # ---------- ค่าช่องกรอกภาษาไทย (2.3.1) ----------
+    # PyMuPDF เก็บค่าไทยลงไฟล์ถูก (UTF-16) แต่วาดหน้าตาช่องด้วยฟอนต์ที่ไม่มีสระ/วรรณยุกต์ไทย
+    # -> ตัวหนังสือในช่องเพี้ยน/เลื่อน (ใน Chrome/โปรแกรมเราเห็นแบบนั้น) จึงวาดหน้าตาช่องเอง
+
+    def _field_job(self, w, text: str) -> dict:
+        """เก็บข้อมูลที่ต้องใช้วาดหน้าตาช่อง (อ่านจาก widget ตอนหน้ายังใช้ได้)"""
+        color = tuple(w.text_color or (0, 0, 0))[:3]
+        return {"xref": w.xref, "text": text, "rect": fitz.Rect(w.rect),
+                "multiline": bool((w.field_flags or 0) & 4096),
+                "size": w.text_fontsize or 0,
+                "color": color if len(color) == 3 else (0, 0, 0),
+                "q": self.doc.xref_get_key(w.xref, "Q")[1]}
+
+    def _draw_field_texts(self, jobs: list[dict]) -> None:
+        """วาดหน้าตาช่องข้อความเองด้วยฟอนต์ไทย (หน้าตาแบบเดียวกับที่ Chrome/Acrobat แสดง)
+
+        ทำหลังแก้ widget ครบทุกตัวแล้วเท่านั้น — เพราะต้องยืมหน้าชั่วคราวมาสร้าง XObject
+        การเพิ่ม/ลบหน้าทำให้ออบเจกต์หน้า (และ widget) ที่ถืออยู่ใช้ไม่ได้อีก
+        """
+        jobs = [j for j in jobs if j["rect"].width >= 2 and j["rect"].height >= 2]
+        if not jobs:
+            return
+        holder = self.doc.new_page(width=100, height=100)
+        try:
+            for job in jobs:
+                tmp = self._field_text_page(job)
+                job["xobj"] = holder.show_pdf_page(holder.rect, tmp, 0, keep_proportion=False)
+        finally:
+            self.doc.delete_page(holder.number)
+        for job in jobs:
+            self.doc.xref_set_key(job["xref"], "AP", f"<< /N {job['xobj']} 0 R >>")
+
+    @staticmethod
+    def _field_text_page(job: dict) -> fitz.Document:
+        width, height = job["rect"].width, job["rect"].height
+        text, color = job["text"], job["color"]
+        fontname, fontfile = resolve_font("sarabun", False, text)
+        if not fontfile:
+            fontname, fontfile = "thaifb", find_thai_font()
+        size = job["size"] or (10.0 if job["multiline"] else min(12.0, height * 0.7))
+        tmp = fitz.open()
+        if job["multiline"]:
+            for _ in range(8):           # ข้อความยาวเกินช่อง = ย่อตัวหนังสือจนพอดี
+                tp = tmp.new_page(width=width, height=height)
+                if tp.insert_textbox(fitz.Rect(2, 2, width - 2, height), text, fontname=fontname,
+                                     fontfile=fontfile, fontsize=size, color=color) >= 0 or size <= 5:
+                    break
+                tmp.delete_page(0)
+                size *= 0.85
+            return tmp
+        tp = tmp.new_page(width=width, height=height)
+        line = text.replace("\n", " ")
+        font = fitz.Font(fontfile=fontfile) if fontfile else fitz.Font("helv")
+        room = width - 4
+        if font.text_length(line, fontsize=size) > room:     # ยาวเกินช่อง = ย่อให้พอดี
+            size = max(4.0, size * room / font.text_length(line, fontsize=size))
+        text_w = font.text_length(line, fontsize=size)
+        x = {"1": (width - text_w) / 2, "2": width - 2 - text_w}.get(job["q"], 2)
+        tp.insert_text((x, height / 2 + size * 0.32), line, fontname=fontname,
+                       fontfile=fontfile, fontsize=size, color=color)
+        return tmp
+
+    def _apply_field_value(self, w, value) -> dict | None:
+        """ตั้งค่าให้ widget หนึ่งตัว (ใช้ร่วมกันทุกทาง: กรอกบนหน้า / หน้าต่างกรอกฟอร์ม)
+
+        คืนงานวาดหน้าตาช่อง (ภาษาไทย) ให้ผู้เรียกส่งต่อ _draw_field_texts หลังแก้ครบทุกช่อง
+        """
+        if w.field_type == fitz.PDF_WIDGET_TYPE_CHECKBOX:
+            w.field_value = w.on_state() if value not in (False, "Off", "", None, 0) else "Off"
+            w.update()
+            return None
+        if w.field_type == fitz.PDF_WIDGET_TYPE_RADIOBUTTON:
+            w.field_value = w.on_state() if value else "Off"
+            w.update()
+            return None
+        text = "" if value is None else str(value)
+        w.field_value = text
+        w.update()                       # เก็บค่า (UTF-16 ถูกต้อง) + หน้าตาแบบปกติ
+        if any(ord(ch) > 126 for ch in text) and w.field_type in (
+                fitz.PDF_WIDGET_TYPE_TEXT, fitz.PDF_WIDGET_TYPE_COMBOBOX):
+            return self._field_job(w, text)   # ภาษาไทย: หน้าตาแบบปกติสระหลุด ต้องวาดใหม่
+        return None
+
+    # ---------- กรอกฟอร์มบนหน้า (2.3.1) — คลิกช่องแล้วพิมพ์ได้เลยแบบ Chrome/Acrobat ----------
+
+    _FILLABLE = (fitz.PDF_WIDGET_TYPE_TEXT, fitz.PDF_WIDGET_TYPE_CHECKBOX,
+                 fitz.PDF_WIDGET_TYPE_RADIOBUTTON, fitz.PDF_WIDGET_TYPE_COMBOBOX,
+                 fitz.PDF_WIDGET_TYPE_LISTBOX)
+
+    def form_widgets_on(self, page_index: int) -> list[dict]:
+        """ช่องกรอกบนหน้านั้น (กรอบเป็นพิกัดที่ผู้ใช้เห็น) เรียงตามลำดับในไฟล์ = ลำดับกด Tab"""
+        if not self.doc.is_form_pdf:
+            return []
+        page = self.doc.load_page(page_index)
+        out = []
+        for w in page.widgets():
+            if w.field_type not in self._FILLABLE:
+                continue
+            rect = fitz.Rect(w.rect)
+            if page.rotation:
+                rect = rect * page.rotation_matrix
+            out.append({
+                "page": page_index, "xref": w.xref, "type": w.field_type,
+                "name": w.field_name or "", "value": w.field_value,
+                "rect": rect,
+                "choices": list(w.choice_values or []),
+                "multiline": bool((w.field_flags or 0) & 4096),      # Ff bit 13 = หลายบรรทัด
+                "readonly": bool((w.field_flags or 0) & 1),
+                "font_size": w.text_fontsize or 0,
+                "on": w.on_state() if w.field_type in (fitz.PDF_WIDGET_TYPE_CHECKBOX,
+                                                       fitz.PDF_WIDGET_TYPE_RADIOBUTTON) else None,
+            })
+        return out
+
+    def form_widget_at(self, page_index: int, point: fitz.Point) -> dict | None:
+        for info in self.form_widgets_on(page_index):
+            if info["rect"].contains(point) and not info["readonly"]:
+                return info
+        return None
+
+    def toggle_form_field(self, page_index: int, xref: int) -> bool:
+        """คลิกช่องติ๊ก = สลับติ๊ก/ไม่ติ๊ก · ปุ่มตัวเลือก (radio) = เลือกอันนี้"""
+        self.push_undo()
+        for w in self.doc.load_page(page_index).widgets():
+            if w.xref != xref:
+                continue
+            if w.field_type == fitz.PDF_WIDGET_TYPE_RADIOBUTTON:
+                w.field_value = w.on_state()
+            else:
+                checked = w.field_value not in (False, "Off", "", None)
+                w.field_value = w.on_state() if not checked else "Off"
+            w.update()
+            self.dirty = True
+            return True
+        self._undo.pop()
+        return False
+
     def set_form_field(self, page_index: int, xref: int, value) -> bool:
         """ตั้งค่าช่องกรอกตาม xref คืน True ถ้าตั้งได้"""
         self.push_undo()
         for w in self.doc.load_page(page_index).widgets():
             if w.xref == xref:
-                if w.field_type == fitz.PDF_WIDGET_TYPE_CHECKBOX:
-                    w.field_value = bool(value)
-                else:
-                    w.field_value = value
-                w.update()
+                job = self._apply_field_value(w, value)
+                if job:
+                    self._draw_field_texts([job])
                 self.dirty = True
                 return True
         # ไม่เจอ widget — ยกเลิก snapshot ที่เพิ่งเก็บ
@@ -2738,16 +2889,15 @@ class PdfDocument:
         by_page: dict[int, dict[int, object]] = {}
         for page, xref, value in updates:
             by_page.setdefault(page, {})[xref] = value
+        jobs: list[dict] = []
         for page_index, xref_map in by_page.items():
             for w in self.doc.load_page(page_index).widgets():
                 if w.xref in xref_map:
-                    value = xref_map[w.xref]
-                    if w.field_type == fitz.PDF_WIDGET_TYPE_CHECKBOX:
-                        w.field_value = bool(value)
-                    else:
-                        w.field_value = value
-                    w.update()
+                    job = self._apply_field_value(w, xref_map[w.xref])
+                    if job:
+                        jobs.append(job)
                     count += 1
+        self._draw_field_texts(jobs)
         if count:
             self.dirty = True
         else:

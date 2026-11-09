@@ -684,6 +684,7 @@ class MainWindow(QMainWindow):
         self.viewer.noteClicked.connect(self._on_note_clicked)
         self.viewer.noteEditRequested.connect(self._edit_note)
         self.viewer.noteMoved.connect(self._on_note_moved)
+        self.viewer.formEdited.connect(self._update_state)      # 2.3.1 กรอกฟอร์มบนหน้า
         self.viewer.captureDragged.connect(self._on_signature_captured)
         self.viewer.rectDragged.connect(self._on_rect_dragged)
         self.viewer.eraseDragged.connect(self._on_erase_dragged)
@@ -2310,6 +2311,8 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, lambda: self.viewer.verticalScrollBar().setValue(scroll))
         else:
             self.viewer.fit_width()     # เพิ่งเปิด
+            if self.doc.is_form():      # 2.3.1: บอกว่าคลิกช่องกรอกได้เลย
+                self.statusBar().showMessage(t("form.hint"), 12000)
         QTimer.singleShot(0, self._update_risk_bar)
 
     def _on_tab_moved(self, src: int, dst: int) -> None:
