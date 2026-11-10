@@ -3432,20 +3432,47 @@ class MainWindow(QMainWindow):
         ("tables", False, "excel.mode_tables"),    # เฉพาะตาราง 1 ตาราง = 1 ชีต
     ]
 
+    def _ask_excel_options(self):
+        """ถามแบบที่จะออก Excel -> (mode, แยกชีตตามหน้า, ใส่รูป) หรือ None ถ้ายกเลิก (จำค่าล่าสุด)"""
+        from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QLabel,
+                                       QVBoxLayout)
+        dialog = QDialog(self)
+        dialog.setWindowTitle(t("tools.to_excel").rstrip("…"))
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(t("excel.ask")))
+        combo = QComboBox()
+        combo.addItems([t(key) for _, _, key in self.EXCEL_MODES])
+        combo.setCurrentIndex(min(int(i18n.get_setting("excel_mode") or 0), combo.count() - 1))
+        layout.addWidget(combo)
+        pics = QCheckBox(t("excel.pictures"))
+        pics.setToolTip(t("excel.pictures_tip"))
+        pics.setChecked(bool(i18n.get_setting("excel_pictures", True)))
+        layout.addWidget(pics)
+
+        def sync() -> None:      # รูปใช้ได้เฉพาะแบบทั้งเอกสาร
+            pics.setEnabled(self.EXCEL_MODES[combo.currentIndex()][0] == "document")
+        combo.currentIndexChanged.connect(sync)
+        sync()
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog._parts = (combo, pics)        # ให้เทสต์เข้าถึงได้
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        i18n.set_setting("excel_mode", combo.currentIndex())
+        i18n.set_setting("excel_pictures", pics.isChecked())
+        mode, per_page, _ = self.EXCEL_MODES[combo.currentIndex()]
+        return mode, per_page, pics.isChecked() and mode == "document"
+
     def export_excel(self) -> None:
         indexes = self._ask_scope(t("tools.to_excel").rstrip("…"))
         if indexes is None:
             return
-        from PySide6.QtWidgets import QInputDialog
-        labels = [t(key) for _, _, key in self.EXCEL_MODES]
-        last = i18n.get_setting("excel_mode") or 0
-        choice, ok = QInputDialog.getItem(self, t("tools.to_excel").rstrip("…"), t("excel.ask"),
-                                          labels, min(int(last), len(labels) - 1), False)
-        if not ok:
+        options = self._ask_excel_options()
+        if options is None:
             return
-        pick = labels.index(choice)
-        i18n.set_setting("excel_mode", pick)
-        mode, per_page, _ = self.EXCEL_MODES[pick]
+        mode, per_page, pictures = options
 
         default = str(self.doc.path.with_suffix(".xlsx")) if self.doc.path else "เอกสาร.xlsx"
         target, _ = QFileDialog.getSaveFileName(
@@ -3455,7 +3482,8 @@ class MainWindow(QMainWindow):
 
         self._busy(t("excel.busy"))
         try:
-            count = self.doc.to_excel(target, indexes, mode=mode, sheet_per_page=per_page)
+            count = self.doc.to_excel(target, indexes, mode=mode, sheet_per_page=per_page,
+                                      pictures=pictures)
         except ValueError as exc:
             QMessageBox.information(self, t("tools.to_excel").rstrip("…"), str(exc))
             return

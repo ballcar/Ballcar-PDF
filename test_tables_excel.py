@@ -105,17 +105,73 @@ app = QApplication.instance() or QApplication(sys.argv)
 w = MainWindow()
 w._open_path(str(src)); app.processEvents()
 out_ui = tmp / "ui.xlsx"
-asked = []
-def pick(parent, title, label, items, current, editable):
-    asked.append((items, current))
-    return items[2], True
-with patch.object(w, "_ask_scope", return_value=[0]),         patch.object(QInputDialog, "getItem", side_effect=pick),         patch.object(QFileDialog, "getSaveFileName", return_value=(str(out_ui), "")):
-    w.export_excel()
-    assert asked[0][1] == 0, "ครั้งแรกเลือกทั้งเอกสารไว้ให้"
+from PySide6.QtWidgets import QDialog
+seen = []
+
+
+def choose(index, pictures):
+    def run(dialog):
+        combo, pics = dialog._parts
+        seen.append((combo.currentIndex(), pics.isChecked()))
+        combo.setCurrentIndex(index)
+        assert pics.isEnabled() == (index != 2), "ใส่รูปได้เฉพาะแบบทั้งเอกสาร"
+        pics.setChecked(pictures)
+        return QDialog.Accepted
+    return run
+
+
+with patch.object(w, "_ask_scope", return_value=[0]), \
+        patch.object(QFileDialog, "getSaveFileName", return_value=(str(out_ui), "")):
+    with patch.object(QDialog, "exec", choose(2, False)):
+        w.export_excel()
+    assert seen[0] == (0, True), "ครั้งแรก: ทั้งเอกสาร + ใส่รูป (แบบ ABBYY)"
     assert load_workbook(out_ui).sheetnames == ["หน้า1-ตาราง1", "หน้า1-ตาราง2", "หน้า1-ตาราง3"]
-    w.export_excel()
-    assert asked[1][1] == 2, "จำแบบที่เลือกครั้งก่อน"
-print("OK  เมนูแปลงเป็น Excel: เลือกแบบได้ จำแบบล่าสุด")
+    with patch.object(QDialog, "exec", choose(0, True)):
+        w.export_excel()
+    assert seen[1] == (2, False), "จำแบบที่เลือกครั้งก่อน"
+    assert load_workbook(out_ui).sheetnames == ["เอกสาร"]
+    with patch.object(QDialog, "exec", lambda self: QDialog.Rejected):
+        before = out_ui.stat().st_mtime_ns
+        w.export_excel()
+        assert out_ui.stat().st_mtime_ns == before, "กดยกเลิก = ไม่แปลง"
+print("OK  เมนูแปลงเป็น Excel: เลือกแบบ + ใส่รูปได้ จำค่าล่าสุด ยกเลิกได้")
+
+# ---- ใส่รูป: แผนผัง (กล่อง+ลูกศร) เป็นรูปแปะ ข้อความในแผนผังอยู่ข้างรูป ----
+flow = tmp / "flow.pdf"
+fd = fitz.open()
+fp = fd.new_page()
+fp.insert_font(fontname="th", fontfile=FONT)
+fp.insert_text((72, 60), "ขั้นตอนการจัดซื้อ", fontname="th", fontsize=16)
+for k, label in enumerate(["1. รับเรื่องขอซื้อ", "2. ติดต่อซัพพลายเออร์", "3. เปิดใบสั่งซื้อ"]):
+    top = 100 + k * 90
+    fp.draw_rect(fitz.Rect(150, top, 400, top + 50), color=(0.2, 0.4, 0.8), width=1.5)
+    fp.insert_text((170, top + 30), label, fontname="th", fontsize=12)
+    if k < 2:
+        fp.draw_line((275, top + 50), (275, top + 90), color=(0.9, 0.5, 0.1), width=1.5)
+fp.insert_text((72, 420), "หมายเหตุ ท้ายแผนผัง", fontname="th", fontsize=11)
+fd.save(str(flow)); fd.close()
+fx = tmp / "flow.xlsx"
+PdfDocument(flow).to_excel(fx, mode="document", pictures=True)
+ws = load_workbook(fx).active
+assert len(ws._images) == 1, "กล่อง+ลูกศรที่ต่อกัน = รูปเดียว"
+img_row = ws._images[0].anchor._from.row + 1
+values = {c.value: (c.row, c.column) for row in ws.iter_rows() for c in row if c.value}
+assert values["ขั้นตอนการจัดซื้อ"][0] < img_row < values["หมายเหตุ ท้ายแผนผัง"][0], "รูปอยู่ตามลำดับในหน้า"
+assert values["1. รับเรื่องขอซื้อ"][0] == img_row and values["1. รับเรื่องขอซื้อ"][1] > 1, \
+    "ข้อความในกล่องอยู่ข้างรูป แถวเดียวกัน"
+assert values["3. เปิดใบสั่งซื้อ"][0] == img_row + 2
+shown_px = ws._images[0].anchor.ext.height / 9525     # ขนาดที่แสดงใน Excel (EMU -> px)
+assert 300 < shown_px < 330, "รูปขนาดเท่าบนกระดาษ (237pt ≈ 316px)"
+height_rows = -(-int(shown_px) // 20)
+assert values["หมายเหตุ ท้ายแผนผัง"][0] > img_row + height_rows - 1, "ข้อความถัดไปไม่ทับรูป"
+PdfDocument(flow).to_excel(tmp / "nopics.xlsx", mode="document")
+nop = load_workbook(tmp / "nopics.xlsx").active
+assert not nop._images and any(c.value == "2. ติดต่อซัพพลายเออร์" for r in nop.iter_rows() for c in r)
+# เส้นใต้/แถบไฮไลต์หลังหัวเรื่อง (ชิ้นเล็ก) และเส้นตาราง ไม่นับเป็นรูป
+src_doc = PdfDocument(src)
+zones = [t["rect"] + (-1, -1, 1, 1) for t in src_doc._tables_on(src_doc.doc[0])]
+assert src_doc._picture_regions(src_doc.doc[0], zones) == []
+print("OK  ใส่รูป: แผนผังเป็นรูปแปะตามลำดับ ข้อความอยู่ข้างรูป ไม่ทับกัน · ไม่ติ๊ก = ไม่มีรูป")
 
 # ---- วรรณยุกต์ตัวยกที่โปรแกรมสร้าง PDF ไม่ได้บอกตัวจริง ----
 fix = {"\u0156": "\u0e49", "\u0155": "\u0e48"}

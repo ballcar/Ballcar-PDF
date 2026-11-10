@@ -144,9 +144,9 @@ print("OK  หน้าที่ไม่มีรูปคืนลิสต์
 # ---- ผ่าน UI ----
 w = fresh()
 out_x = tmp / "ui.xlsx"
-TABLES_ONLY = i18n.t("excel.mode_tables")    # 2.3.2: ถามแบบ (ทั้งเอกสาร/เฉพาะตาราง) ต่อจากช่วงหน้า
-with patch("app.main.QInputDialog.getItem",
-           side_effect=[("ทุกหน้า (2 หน้า)", True), (TABLES_ONLY, True)]), \
+TABLES_ONLY = ("tables", False, False)    # 2.3.2: ถามแบบ (ทั้งเอกสาร/เฉพาะตาราง) ต่อจากช่วงหน้า
+with patch("app.main.QInputDialog.getItem", return_value=("ทุกหน้า (2 หน้า)", True)), \
+     patch.object(MainWindow, "_ask_excel_options", return_value=TABLES_ONLY), \
      patch("app.main.QFileDialog.getSaveFileName", return_value=(str(out_x), "")):
     w.export_excel()
 assert out_x.exists()
@@ -154,8 +154,8 @@ print("OK  ดึงตารางผ่านเมนูได้")
 
 w = fresh()
 w.thumbs.setCurrentRow(1)              # ไปหน้า 2 (ไม่มีตาราง)
-with patch("app.main.QInputDialog.getItem",
-           side_effect=[("หน้าปัจจุบัน (หน้า 2)", True), (TABLES_ONLY, True)]), \
+with patch("app.main.QInputDialog.getItem", return_value=("หน้าปัจจุบัน (หน้า 2)", True)), \
+     patch.object(MainWindow, "_ask_excel_options", return_value=TABLES_ONLY), \
      patch("app.main.QFileDialog.getSaveFileName", return_value=(str(tmp / "nope.xlsx"), "")), \
      patch("app.main.QMessageBox.information") as info:
     w.export_excel()

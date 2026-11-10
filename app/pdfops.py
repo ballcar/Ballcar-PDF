@@ -3404,16 +3404,19 @@ class PdfDocument:
         return Path(target)
 
     def to_excel(self, target: str | Path, indexes: list[int] | None = None,
-                 mode: str = "tables", sheet_per_page: bool = False) -> int:
+                 mode: str = "tables", sheet_per_page: bool = False,
+                 pictures: bool = False) -> int:
         """ออกเป็น .xlsx
 
         mode="tables"   : เฉพาะตาราง (1 ตาราง = 1 ชีต) คืนจำนวนตาราง
         mode="document" : ทั้งเอกสาร — หัวเรื่อง/ข้อความ/หมายเหตุ/ตาราง เรียงตามหน้า (แบบ ABBYY)
                           คงขนาด/ตัวหนา/สีตัวอักษร · sheet_per_page=True แยกชีตตามหน้า
                           คืนจำนวนแถวที่เขียน
+                          pictures=True: แผนผัง/กล่อง/ลูกศร/รูป ถ่ายเป็นรูปแปะลง Excel ตามตำแหน่ง
+                          (ข้อความในแผนผังเขียนไว้ข้างรูป ยังคัดลอก/ค้นหาได้)
         """
         if mode == "document":
-            return self._excel_document(target, indexes, sheet_per_page)
+            return self._excel_document(target, indexes, sheet_per_page, pictures)
         from openpyxl import Workbook
 
         indexes = list(range(self.page_count)) if indexes is None else sorted(set(indexes))
@@ -3456,13 +3459,62 @@ class PdfDocument:
         book.save(str(target))
         return count
 
-    def _page_items(self, page: fitz.Page) -> list[dict]:
-        """ของบนหน้าเรียงจากบนลงล่าง: ตาราง และกลุ่มข้อความ (ข้อความในตารางไม่นับซ้ำ)"""
+    @staticmethod
+    def _picture_regions(page: fitz.Page, zones: list) -> list:
+        """พื้นที่ที่เป็นแผนผัง/กล่อง/ลูกศร/รูปภาพ (ไม่ใช่ตาราง) — รวมชิ้นที่อยู่ติดกันเป็นก้อนเดียว
+
+        ตัดของชิ้นเล็กทิ้ง (เส้นใต้ข้อความ, แถบไฮไลต์หลังหัวเรื่อง) เหลือแต่ก้อนที่เป็นภาพจริง
+        """
+        pieces = []
+        for path in page.get_drawings():
+            r = fitz.Rect(path["rect"])
+            if r.width <= 0 and r.height <= 0:
+                continue
+            r = fitz.Rect(r.x0 - 0.5, r.y0 - 0.5, r.x1 + 0.5, r.y1 + 0.5)
+            if any(z.intersects(r) for z in zones):
+                continue                        # เส้นตาราง
+            pieces.append([r, 1, False])
+        for info in page.get_image_info():
+            r = fitz.Rect(info["bbox"]) & page.rect
+            if r.is_empty or any(z.contains(r) for z in zones):
+                continue
+            pieces.append([r, 1, True])
+        gap = 8
+        merged = True
+        while merged and len(pieces) > 1:
+            merged = False
+            out = []
+            for piece in pieces:
+                grown = piece[0] + (-gap, -gap, gap, gap)
+                for other in out:
+                    if grown.intersects(other[0]):
+                        other[0] |= piece[0]
+                        other[1] += piece[1]
+                        other[2] = other[2] or piece[2]
+                        merged = True
+                        break
+                else:
+                    out.append(piece)
+            pieces = out
+        regions = []
+        for rect, count, has_image in pieces:
+            if rect.width >= 40 and rect.height >= 40 and (count >= 2 or has_image):
+                regions.append((rect + (-3, -3, 3, 3)) & page.rect)
+        return regions
+
+    def _page_items(self, page: fitz.Page, pictures: bool = False) -> list[dict]:
+        """ของบนหน้าเรียงจากบนลงล่าง: ตาราง กลุ่มข้อความ (และรูปแผนผัง) — ข้อความไม่นับซ้ำ"""
         fixes = _page_thai_fixes(page)
         tables = self._tables_on(page)
         zones = [t["rect"] + (-1, -1, 1, 1) for t in tables]
         items = [{"kind": "table", "y": t["rect"].y0, "x": t["rect"].x0, "rows": t["rows"]}
                  for t in tables]
+        pics = []
+        if pictures:
+            for rect in self._picture_regions(page, zones):
+                pic = {"kind": "picture", "y": rect.y0, "x": rect.x0, "rect": rect, "texts": []}
+                pics.append(pic)
+                items.append(pic)
         for block in page.get_text("dict")["blocks"]:
             if block.get("type") != 0:
                 continue
@@ -3483,15 +3535,27 @@ class PdfDocument:
                     lines.append(text)
                     box = rect if box is None else box | rect
             if lines and style is not None:
-                items.append({"kind": "text", "y": box.y0, "x": box.x0, "bottom": box.y1,
-                              "text": " ".join(lines), "size": style["size"],
-                              "bold": bool(style["flags"] & 16) or "bold" in style["font"].lower(),
-                              "color": style["color"]})
+                item = {"kind": "text", "y": box.y0, "x": box.x0, "bottom": box.y1,
+                        "text": " ".join(lines), "size": style["size"],
+                        "bold": bool(style["flags"] & 16) or "bold" in style["font"].lower(),
+                        "color": style["color"]}
+                centre = fitz.Point((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2)
+                owner = next((pic for pic in pics if pic["rect"].contains(centre)), None)
+                if owner is not None:
+                    owner["texts"].append(item)     # ข้อความในแผนผัง -> เขียนไว้ข้างรูป
+                else:
+                    items.append(item)
+        for pic in pics:
+            pic["texts"].sort(key=lambda it: (round(it["y"] / 8), it["x"]))   # บนลงล่าง ซ้ายไปขวา
+            pic["png"] = page.get_pixmap(clip=pic["rect"], dpi=144).tobytes("png")
         items.sort(key=lambda it: (round(it["y"]), it["x"]))
         return items
 
-    def _excel_document(self, target, indexes, sheet_per_page: bool) -> int:
+    def _excel_document(self, target, indexes, sheet_per_page: bool,
+                        pictures: bool = False) -> int:
+        import io
         from openpyxl import Workbook
+        from openpyxl.drawing.image import Image as XLImage
         from openpyxl.styles import Alignment, Border, Font, Side
         from openpyxl.utils import get_column_letter
 
@@ -3506,7 +3570,7 @@ class PdfDocument:
 
         for i in indexes:
             page = self.doc.load_page(i)
-            items = self._page_items(page)
+            items = self._page_items(page, pictures)
             if sheet_per_page or sheet is None:
                 sheet = book.create_sheet(f"หน้า {i + 1}" if sheet_per_page else "เอกสาร")
                 state[sheet.title] = {"row": 1, "widths": {}}
@@ -3529,6 +3593,25 @@ class PdfDocument:
                 if last_bottom is not None and row["y"] - last_bottom > 12:
                     st["row"] += 1               # มีช่องว่างบนหน้า = เว้นบรรทัดใน Excel
                 r = st["row"]
+                if row["kind"] == "picture":
+                    rect = row["rect"]
+                    image = XLImage(io.BytesIO(row["png"]))
+                    scale = min(96 / 72, 760 / rect.width)       # เท่าบนกระดาษ แต่ไม่กว้างเกินจอ
+                    image.width = int(rect.width * scale)
+                    image.height = int(rect.height * scale)
+                    sheet.add_image(image, f"A{r}")
+                    # ข้อความในแผนผัง: คอลัมน์ถัดจากรูป แถวเดียวกัน (คัดลอก/ค้นหาได้)
+                    col, edge = 1, 0
+                    while edge < image.width + 10:
+                        edge += int(st["widths"].get(col, 8.43) * 7 + 5)
+                        col += 1
+                    for k, it in enumerate(row["texts"]):
+                        sheet.cell(row=r + k, column=col, value=it["text"])
+                    span = max(-(-image.height // 20), len(row["texts"]))   # แถวปกติสูง 20px
+                    st["row"] += span + 1
+                    written += 1 + len(row["texts"])
+                    last_bottom = None
+                    continue
                 if row["kind"] == "text":
                     for c, it in enumerate(sorted(row["cells"], key=lambda x: x["x"]), start=1):
                         cell = sheet.cell(row=r, column=c, value=it["text"])

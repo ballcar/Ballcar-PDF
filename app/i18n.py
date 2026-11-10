@@ -620,6 +620,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "excel.mode_pages": "ทั้งเอกสาร แยกชีตตามหน้า",
         "excel.mode_tables": "เฉพาะตาราง (1 ตาราง = 1 ชีต)",
         "excel.busy": "กำลังแปลงเป็น Excel…",
+        "excel.pictures": "ใส่รูปภาพ (แผนผัง / กล่อง / ลูกศร / รูปในไฟล์)",
+        "excel.pictures_tip": "ถ่ายแผนผังเป็นรูปแปะลง Excel ตามตำแหน่ง ข้อความในแผนผังเขียนไว้ข้างรูปด้วย"
+                              " — ไฟล์จะใหญ่ขึ้น",
         "excel.failed": "แปลงเป็น Excel ไม่สำเร็จ",
         "excel.done_tables": "ดึง {n} ตารางไปที่ {path}",
         "excel.done_doc": "แปลงเป็น Excel แล้ว ({n} แถว): {path}",
@@ -1268,6 +1271,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "excel.mode_pages": "Whole document, one sheet per page",
         "excel.mode_tables": "Tables only (one table per sheet)",
         "excel.busy": "Converting to Excel…",
+        "excel.pictures": "Keep pictures (diagrams / boxes / arrows / images)",
+        "excel.pictures_tip": "Diagrams are placed as pictures in their position; their text is"
+                              " written next to them. The file gets larger.",
         "excel.failed": "Excel conversion failed",
         "excel.done_tables": "Extracted {n} table(s) to {path}",
         "excel.done_doc": "Converted to Excel ({n} rows): {path}",
