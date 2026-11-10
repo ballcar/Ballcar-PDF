@@ -274,6 +274,140 @@ def set_ocr_corrections(pairs) -> None:
     _ocr_user_fixes = sorted(clean, key=lambda ab: len(ab[0]), reverse=True)
 
 
+# ---------- วรรณยุกต์ไทยเพี้ยนตอนดึงข้อความ (ไฟล์จาก Excel/Word ที่ใช้ฟอนต์ Leelawadee/Angsana ฯลฯ) ----------
+# ฟอนต์ไทยมี "วรรณยุกต์ตัวยก" (วางเหนือสระบน เช่น ซื้อ ชั้น ที่) เป็นรูปแยกต่างหาก
+# โปรแกรมที่สร้าง PDF ไม่ได้บอกว่ารูปนั้นคือตัวอะไร -> ดึงข้อความได้ ซืŖอ / ชัŖน / ทีÉ
+# แก้โดยเปิดตาราง GSUB ในฟอนต์ที่ฝังมา ซึ่งบอกว่ารูปตัวยกนี้แปลงมาจากวรรณยุกต์ตัวไหน
+
+def _glyph_cache(doc: fitz.Document) -> dict:
+    """แคชตารางแก้ของไฟล์นี้ (เก็บไว้กับตัวเอกสารเอง ปิดไฟล์แล้วหายไปด้วย)"""
+    cache = getattr(doc, "_ballcar_glyph_fix", None)
+    if cache is None:
+        cache = {}
+        doc._ballcar_glyph_fix = cache
+    return cache
+
+
+def _is_thai(ch: str) -> bool:
+    return "\u0e00" <= ch <= "\u0e7f"
+
+
+def _font_thai_fix(doc: fitz.Document, xref: int) -> dict:
+    """{อักขระเพี้ยน: อักขระไทยที่ถูก} ของฟอนต์หนึ่งตัว (ว่างถ้าไม่มีอะไรต้องแก้)"""
+    cache = _glyph_cache(doc)
+    if xref in cache:
+        return cache[xref]
+    result: dict = {}
+    try:
+        buf = doc.extract_font(xref)[3]
+        if buf:
+            import io
+            from fontTools.ttLib import TTFont
+            font = TTFont(io.BytesIO(buf), lazy=True)
+            name_to_char: dict = {}
+            for code, name in (font.getBestCmap() or {}).items():
+                name_to_char.setdefault(name, chr(code))
+            source: dict = {}
+            if "GSUB" in font and font["GSUB"].table.LookupList:
+                for lookup in font["GSUB"].table.LookupList.Lookup:
+                    for sub in lookup.SubTable:
+                        if lookup.LookupType == 7:
+                            sub = sub.ExtSubTable
+                        for a, b in (getattr(sub, "mapping", None) or {}).items():
+                            if isinstance(b, str):
+                                source.setdefault(b, a)
+                        for a, alts in (getattr(sub, "alternates", None) or {}).items():
+                            for b in alts:
+                                source.setdefault(b, a)
+            for gid, name in enumerate(font.getGlyphOrder()):
+                if name in name_to_char:
+                    continue
+                base, hops = name, 0
+                while base not in name_to_char and base in source and hops < 6:
+                    base, hops = source[base], hops + 1
+                ch = name_to_char.get(base)
+                # รหัสต่ำกว่า 128 ชนกับตัวอังกฤษ/ตัวเลขจริง (เช่น s) แยกไม่ออก จึงไม่แตะ
+                if ch and _is_thai(ch) and gid >= 128:
+                    result[chr(gid)] = ch
+    except Exception:
+        result = {}
+    cache[xref] = result
+    return result
+
+
+def _page_thai_fixes(page: fitz.Page) -> dict:
+    """{ชื่อฟอนต์: ตารางแก้} ของฟอนต์บนหน้านี้
+
+    ฟอนต์ที่ฝังแบบตัดเหลือบางส่วน บางตัวไม่มีข้อมูลพอให้รู้ว่ารูปไหนคือวรรณยุกต์ตัวไหน
+    แต่ฟอนต์เดียวกันที่ฝังไว้หน้าอื่นมี -> ใช้ตารางรวมทั้งไฟล์เสริม (เฉพาะตัวที่ไม่ขัดกัน)
+    """
+    doc_wide = _doc_thai_fix(page.parent)
+    if not doc_wide:
+        return {}
+    out = {}
+    for info in page.get_fonts(full=True):
+        fix = {**doc_wide, **_font_thai_fix(page.parent, info[0])}
+        out[info[3]] = fix
+        out[info[3].split("+")[-1]] = fix
+    return out
+
+
+def _doc_thai_fix(doc: fitz.Document) -> dict:
+    cache = _glyph_cache(doc)
+    if "doc" not in cache:
+        merged: dict = {}
+        clash: set = set()
+        seen: set = set()
+        for i in range(doc.page_count):
+            for info in doc.get_page_fonts(i, full=True):
+                if info[0] in seen:
+                    continue
+                seen.add(info[0])
+                for bad, good in _font_thai_fix(doc, info[0]).items():
+                    if merged.get(bad, good) != good:
+                        clash.add(bad)
+                    merged[bad] = good
+        cache["doc"] = {k: v for k, v in merged.items() if k not in clash}
+    return cache["doc"]
+
+
+def _fix_span(text: str, fix: dict, before: str = "") -> str:
+    """แทนอักขระเพี้ยน เฉพาะที่ติดกับตัวไทย (กันไปแก้ตัวอังกฤษ/สัญลักษณ์จริงๆ)"""
+    out = []
+    for k, ch in enumerate(text):
+        if ch in fix:
+            prev = out[-1] if out else (before[-1:] or "")
+            nxt = text[k + 1] if k + 1 < len(text) else ""
+            if _is_thai(prev) or _is_thai(nxt):
+                ch = fix[ch]
+        out.append(ch)
+    return "".join(out)
+
+
+def page_text_fixed(page: fitz.Page, clip=None) -> str:
+    """ข้อความในหน้า (หรือในกรอบ) แบบเดียวกับ get_text() แต่แก้วรรณยุกต์ไทยที่เพี้ยนแล้ว"""
+    fixes = _page_thai_fixes(page)
+    if not fixes:
+        return _tidy_thai(page.get_text("text", clip=clip))
+    blocks = []
+    for block in page.get_text("dict", clip=clip)["blocks"]:
+        lines = []
+        for line in block.get("lines", []):
+            text = ""
+            for span in line["spans"]:
+                fix = fixes.get(span["font"]) or fixes.get(span["font"].split("+")[-1])
+                text += _fix_span(span["text"], fix, text) if fix else span["text"]
+            lines.append(text)
+        if lines:
+            blocks.append("\n".join(lines))
+    return _tidy_thai("\n".join(blocks) + ("\n" if blocks else ""))
+
+
+def _tidy_thai(text: str) -> str:
+    """ํ + า (นิคหิต + สระอา ที่บางโปรแกรมเก็บแยกกัน) -> ำ ให้ค้นหา/เทียบคำได้"""
+    return text.replace("ํา", "ำ") if "ํ" in text else text
+
+
 def fix_thai_ocr(text: str) -> str:
     import re
     for wrong, right in _OCR_RULES:
@@ -1167,7 +1301,7 @@ class PdfDocument:
         return self.doc.load_page(index).get_pixmap(matrix=matrix, alpha=False)
 
     def page_text(self, index: int) -> str:
-        return self.doc.load_page(index).get_text()
+        return page_text_fixed(self.doc.load_page(index))
 
     def all_text(self) -> str:
         return "\n".join(self.page_text(i) for i in range(self.page_count))
@@ -3000,14 +3134,108 @@ class PdfDocument:
 
     def find_tables(self, index: int) -> list[list[list[str]]]:
         """หาตารางในหน้านั้น คืนเป็นลิสต์ของตาราง (แต่ละตารางเป็นลิสต์ของแถว)"""
-        page = self.doc.load_page(index)
+        return [[[cell["text"] for cell in row] for row in table]
+                for table in self.table_cells(index)]
+
+    def table_cells(self, index: int) -> list[list[list[dict]]]:
+        """ตารางในหน้า: [ตาราง][แถว][ช่อง] = {text, span (จำนวนคอลัมน์ที่ช่องนี้กินพื้นที่)}
+
+        - ตารางหลายอันที่วางเรียงกันในแนวตั้ง (เช่นไฟล์จาก Excel) PyMuPDF มักรวบเป็นตารางเดียว
+          เพราะเส้นแนวนอนยาวเท่ากัน จึงแยกกลับตามเส้นขอบซ้ายของแต่ละตาราง
+          และทิ้งแถวที่อยู่นอกกรอบ (เช่นหมายเหตุระหว่างตาราง)
+        - ข้อความในช่องอ่านตามลำดับจริง (ตัวช่วยของ PyMuPDF เอาสระล่าง ุ ู ไปต่อท้ายคำ)
+        """
+        return [t["rows"] for t in self._tables_on(self.doc.load_page(index))]
+
+    def _tables_on(self, page: fitz.Page) -> list[dict]:
+        """ตารางบนหน้า พร้อมกรอบบนหน้า: [{rect, rows}] (rect รวมหัวตารางที่อยู่เหนือกรอบด้วย)"""
         found = []
         for table in page.find_tables().tables:
-            rows = [[(cell if cell is not None else "") for cell in row]
-                    for row in table.extract()]
-            if rows:
-                found.append(rows)
+            for rows in self._split_table(page, table):
+                cells_rows = []
+                for row in rows:
+                    cells = list(row.cells)
+                    out_row = []
+                    for k, cell in enumerate(cells):
+                        if cell is None:
+                            continue            # ถูกช่องก่อนหน้าครอบไว้ (ช่องผสาน)
+                        span = 1
+                        while k + span < len(cells) and cells[k + span] is None:
+                            span += 1
+                        rect = fitz.Rect(cell)
+                        text = page_text_fixed(page, clip=rect).strip()
+                        text = " ".join(part.strip() for part in text.splitlines() if part.strip())
+                        text = " ".join(text.replace("\xa0", " ").split())
+                        out_row.append({"text": text, "span": span})
+                        out_row.extend({"text": "", "span": 0} for _ in range(span - 1))
+                    if any(c["text"] for c in out_row) or out_row:
+                        cells_rows.append(out_row)
+                # ตารางที่ไม่มีข้อความเลยสักช่อง (กรอบเปล่า/เส้นตกแต่ง) ไม่นับ
+                if not any(c["text"] for r in cells_rows for c in r):
+                    continue
+                # หัวตารางที่พิมพ์ไว้เหนือกรอบพอดี (ไม่อยู่ในกรอบ) และแถวแรกไม่ใช่หัวตาราง -> เติมเป็นแถวหัว
+                title_top = None
+                width = len(cells_rows[0])
+                if width > 1 and cells_rows[0][0]["span"] < width:
+                    top = min(r.bbox[1] for r in rows)
+                    left, right = rows[0].bbox[0], rows[0].bbox[2]
+                    # เลือกเป็นบรรทัด (ไม่ตัดด้วยกรอบ ไม่งั้นวรรณยุกต์ที่อยู่สูงจะหลุด)
+                    band = fitz.Rect(left, top - 40, right, top + 1)
+                    lines = [fitz.Rect(line["bbox"])
+                             for block in page.get_text("dict", clip=band)["blocks"]
+                             for line in block.get("lines", [])]
+                    near = [r for r in lines if top - 14 <= r.y1 <= top + 1]
+                    title = ""
+                    if near:
+                        area = fitz.Rect(left, min(r.y0 for r in near) - 0.5, right,
+                                         max(r.y1 for r in near) + 0.5)
+                        title = page_text_fixed(page, clip=area)
+                    title = " ".join(title.replace("\xa0", " ").split())
+                    if title and len(title) < 120:
+                        cells_rows.insert(0, [{"text": title, "span": width}] +
+                                          [{"text": "", "span": 0} for _ in range(width - 1)])
+                        title_top = min(r.y0 for r in near)
+                rect = fitz.Rect(rows[0].bbox)
+                for row in rows[1:]:
+                    rect |= fitz.Rect(row.bbox)
+                if title_top is not None:
+                    rect.y0 = min(rect.y0, title_top)
+                found.append({"rect": rect, "rows": cells_rows})
         return found
+
+    @staticmethod
+    def _split_table(page: fitz.Page, table) -> list[list]:
+        """แบ่งแถวของตาราง ตามช่วงเส้นขอบซ้ายที่ต่อเนื่องกัน (1 ช่วง = 1 ตารางจริง)"""
+        rows = list(table.rows)
+        x0 = table.bbox[0]
+        spans: list[list[float]] = []
+        for path in page.get_drawings():
+            for item in path["items"]:
+                if item[0] == "re":
+                    r = fitz.Rect(item[1])
+                    if r.width <= 3 and r.height > 4 and abs((r.x0 + r.x1) / 2 - x0) < 4:
+                        spans.append([r.y0, r.y1])
+                elif item[0] == "l":
+                    a, b = item[1], item[2]
+                    if abs(a.x - b.x) < 1 and abs(a.x - x0) < 4 and abs(a.y - b.y) > 4:
+                        spans.append([min(a.y, b.y), max(a.y, b.y)])
+        if not spans:
+            return [rows]                       # ตารางไม่มีเส้นซ้าย ใช้ตามที่หาได้
+        spans.sort()
+        merged = [spans[0]]
+        for y0, y1 in spans[1:]:
+            if y0 <= merged[-1][1] + 1.5:
+                merged[-1][1] = max(merged[-1][1], y1)
+            else:
+                merged.append([y0, y1])
+        groups: dict[int, list] = {}
+        for row in rows:
+            mid = (row.bbox[1] + row.bbox[3]) / 2
+            for n, (y0, y1) in enumerate(merged):
+                if y0 - 0.5 <= mid <= y1 + 0.5:
+                    groups.setdefault(n, []).append(row)
+                    break
+        return [groups[n] for n in sorted(groups)] or [rows]
 
     def extract_images(self, indexes: list[int], folder: str | Path) -> list[Path]:
         """ดึงรูปที่ฝังอยู่ในไฟล์ออกมาเป็นไฟล์รูป (ไม่ใช่การแปลงหน้าเป็นรูป)"""
@@ -3175,8 +3403,17 @@ class PdfDocument:
                 root.setLevel(previous_level)
         return Path(target)
 
-    def to_excel(self, target: str | Path, indexes: list[int] | None = None) -> int:
-        """ดึงตารางทุกหน้าออกเป็น .xlsx (1 ตาราง = 1 ชีต) คืนจำนวนตารางที่เจอ"""
+    def to_excel(self, target: str | Path, indexes: list[int] | None = None,
+                 mode: str = "tables", sheet_per_page: bool = False) -> int:
+        """ออกเป็น .xlsx
+
+        mode="tables"   : เฉพาะตาราง (1 ตาราง = 1 ชีต) คืนจำนวนตาราง
+        mode="document" : ทั้งเอกสาร — หัวเรื่อง/ข้อความ/หมายเหตุ/ตาราง เรียงตามหน้า (แบบ ABBYY)
+                          คงขนาด/ตัวหนา/สีตัวอักษร · sheet_per_page=True แยกชีตตามหน้า
+                          คืนจำนวนแถวที่เขียน
+        """
+        if mode == "document":
+            return self._excel_document(target, indexes, sheet_per_page)
         from openpyxl import Workbook
 
         indexes = list(range(self.page_count)) if indexes is None else sorted(set(indexes))
@@ -3184,12 +3421,31 @@ class PdfDocument:
         book.remove(book.active)
         count = 0
 
+        from openpyxl.styles import Alignment, Border, Font, Side
+        thin = Side(style="thin", color="999999")
+        box = Border(left=thin, right=thin, top=thin, bottom=thin)
+
         for i in indexes:
-            for order, rows in enumerate(self.find_tables(i), start=1):
+            for order, rows in enumerate(self.table_cells(i), start=1):
                 count += 1
                 sheet = book.create_sheet(f"หน้า{i + 1}-ตาราง{order}"[:31])
-                for row in rows:
-                    sheet.append([str(cell).replace("\n", " ") if cell else "" for cell in row])
+                widths: dict[int, int] = {}
+                for r, row in enumerate(rows, start=1):
+                    for c, cell in enumerate(row, start=1):
+                        target_cell = sheet.cell(row=r, column=c, value=cell["text"] or None)
+                        target_cell.border = box
+                        target_cell.alignment = Alignment(vertical="top", wrap_text=True)
+                        if cell["span"] > 1:        # ช่องผสาน (เช่นหัวตาราง) -> ผสานใน Excel ด้วย
+                            sheet.merge_cells(start_row=r, start_column=c,
+                                              end_row=r, end_column=c + cell["span"] - 1)
+                            target_cell.alignment = Alignment(horizontal="center", vertical="top",
+                                                              wrap_text=True)
+                            target_cell.font = Font(bold=True)
+                        elif cell["span"] == 1:
+                            widths[c] = max(widths.get(c, 8), min(60, len(cell["text"]) + 2))
+                from openpyxl.utils import get_column_letter
+                for c, width in widths.items():
+                    sheet.column_dimensions[get_column_letter(c)].width = width
 
         if not count:
             raise ValueError(
@@ -3199,6 +3455,119 @@ class PdfDocument:
 
         book.save(str(target))
         return count
+
+    def _page_items(self, page: fitz.Page) -> list[dict]:
+        """ของบนหน้าเรียงจากบนลงล่าง: ตาราง และกลุ่มข้อความ (ข้อความในตารางไม่นับซ้ำ)"""
+        fixes = _page_thai_fixes(page)
+        tables = self._tables_on(page)
+        zones = [t["rect"] + (-1, -1, 1, 1) for t in tables]
+        items = [{"kind": "table", "y": t["rect"].y0, "x": t["rect"].x0, "rows": t["rows"]}
+                 for t in tables]
+        for block in page.get_text("dict")["blocks"]:
+            if block.get("type") != 0:
+                continue
+            lines, style, box = [], None, None
+            for line in block.get("lines", []):
+                rect = fitz.Rect(line["bbox"])
+                centre = fitz.Point((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)
+                if any(z.contains(centre) for z in zones):
+                    continue                    # อยู่ในตาราง เขียนไปกับตารางแล้ว
+                text = ""
+                for span in line["spans"]:
+                    fix = fixes.get(span["font"]) or fixes.get(span["font"].split("+")[-1])
+                    text += _fix_span(span["text"], fix, text) if fix else span["text"]
+                    if style is None and span["text"].strip():
+                        style = span
+                text = " ".join(_tidy_thai(text).replace("\xa0", " ").split())
+                if text:
+                    lines.append(text)
+                    box = rect if box is None else box | rect
+            if lines and style is not None:
+                items.append({"kind": "text", "y": box.y0, "x": box.x0, "bottom": box.y1,
+                              "text": " ".join(lines), "size": style["size"],
+                              "bold": bool(style["flags"] & 16) or "bold" in style["font"].lower(),
+                              "color": style["color"]})
+        items.sort(key=lambda it: (round(it["y"]), it["x"]))
+        return items
+
+    def _excel_document(self, target, indexes, sheet_per_page: bool) -> int:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, Side
+        from openpyxl.utils import get_column_letter
+
+        indexes = list(range(self.page_count)) if indexes is None else sorted(set(indexes))
+        thin = Side(style="thin", color="999999")
+        box = Border(left=thin, right=thin, top=thin, bottom=thin)
+        book = Workbook()
+        book.remove(book.active)
+        state: dict = {}            # ชีต -> {row, widths}
+        written = 0
+        sheet = None
+
+        for i in indexes:
+            page = self.doc.load_page(i)
+            items = self._page_items(page)
+            if sheet_per_page or sheet is None:
+                sheet = book.create_sheet(f"หน้า {i + 1}" if sheet_per_page else "เอกสาร")
+                state[sheet.title] = {"row": 1, "widths": {}}
+            st = state[sheet.title]
+            if st["row"] > 1:
+                st["row"] += 2                   # เว้นระหว่างหน้า (ชีตเดียว)
+            # รวมข้อความที่อยู่บรรทัดเดียวกันเป็นแถวเดียว (กล่องวางเรียงข้างกัน = คนละคอลัมน์)
+            rows: list = []
+            for it in items:
+                if (it["kind"] == "text" and rows and rows[-1]["kind"] == "text"
+                        and abs(it["y"] - rows[-1]["y"]) < 5):
+                    rows[-1]["cells"].append(it)
+                    rows[-1]["bottom"] = max(rows[-1]["bottom"], it["bottom"])
+                elif it["kind"] == "text":
+                    rows.append({"kind": "text", "y": it["y"], "bottom": it["bottom"], "cells": [it]})
+                else:
+                    rows.append(it)
+            last_bottom = None
+            for row in rows:
+                if last_bottom is not None and row["y"] - last_bottom > 12:
+                    st["row"] += 1               # มีช่องว่างบนหน้า = เว้นบรรทัดใน Excel
+                r = st["row"]
+                if row["kind"] == "text":
+                    for c, it in enumerate(sorted(row["cells"], key=lambda x: x["x"]), start=1):
+                        cell = sheet.cell(row=r, column=c, value=it["text"])
+                        rgb = f"{it['color']:06X}" if it["color"] else "000000"
+                        cell.font = Font(size=max(8, round(it["size"])), bold=it["bold"],
+                                         color="FF" + rgb)
+                        cell.alignment = Alignment(vertical="top")
+                    st["row"] += 1
+                    last_bottom = row["bottom"]
+                    written += 1
+                    continue
+                for trow in row["rows"]:
+                    for c, item in enumerate(trow, start=1):
+                        cell = sheet.cell(row=st["row"], column=c, value=item["text"] or None)
+                        cell.border = box
+                        cell.alignment = Alignment(vertical="top", wrap_text=True)
+                        if item["span"] > 1:
+                            sheet.merge_cells(start_row=st["row"], start_column=c,
+                                              end_row=st["row"], end_column=c + item["span"] - 1)
+                            cell.alignment = Alignment(horizontal="center", vertical="top",
+                                                       wrap_text=True)
+                            cell.font = Font(bold=True)
+                        elif item["span"] == 1:
+                            st["widths"][c] = max(st["widths"].get(c, 12),
+                                                  min(60, len(item["text"]) + 2))
+                    st["row"] += 1
+                    written += 1
+                last_bottom = None
+                st["row"] += 1                   # เว้นหลังตาราง
+            for c, width in st["widths"].items():
+                sheet.column_dimensions[get_column_letter(c)].width = width
+
+        if not written:
+            raise ValueError(
+                "ไม่พบข้อความในหน้าที่เลือก\n"
+                "(ถ้าเป็นไฟล์สแกน ใช้ 'OCR อ่านข้อความจากไฟล์สแกน' ก่อน แล้วค่อยออกเป็น Excel)"
+            )
+        book.save(str(target))
+        return written
 
     # ---------- export รูปภาพ ----------
 

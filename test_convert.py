@@ -1,13 +1,15 @@
 """ทดสอบแปลง Word/Excel + ดึงตาราง/รูปภาพ"""
-import sys, tempfile
+import os, sys, tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+os.environ["APPDATA"] = tempfile.mkdtemp()     # ไม่ให้เทสต์ไปเขียนค่าตั้งของเครื่องจริง
 
 import fitz
 from PIL import Image
 from PySide6.QtWidgets import QApplication
+from app import i18n
 from app.main import MainWindow
 from app.pdfops import PdfDocument, find_thai_font
 
@@ -142,7 +144,9 @@ print("OK  หน้าที่ไม่มีรูปคืนลิสต์
 # ---- ผ่าน UI ----
 w = fresh()
 out_x = tmp / "ui.xlsx"
-with patch("app.main.QInputDialog.getItem", return_value=("ทุกหน้า (2 หน้า)", True)), \
+TABLES_ONLY = i18n.t("excel.mode_tables")    # 2.3.2: ถามแบบ (ทั้งเอกสาร/เฉพาะตาราง) ต่อจากช่วงหน้า
+with patch("app.main.QInputDialog.getItem",
+           side_effect=[("ทุกหน้า (2 หน้า)", True), (TABLES_ONLY, True)]), \
      patch("app.main.QFileDialog.getSaveFileName", return_value=(str(out_x), "")):
     w.export_excel()
 assert out_x.exists()
@@ -150,7 +154,8 @@ print("OK  ดึงตารางผ่านเมนูได้")
 
 w = fresh()
 w.thumbs.setCurrentRow(1)              # ไปหน้า 2 (ไม่มีตาราง)
-with patch("app.main.QInputDialog.getItem", return_value=("หน้าปัจจุบัน (หน้า 2)", True)), \
+with patch("app.main.QInputDialog.getItem",
+           side_effect=[("หน้าปัจจุบัน (หน้า 2)", True), (TABLES_ONLY, True)]), \
      patch("app.main.QFileDialog.getSaveFileName", return_value=(str(tmp / "nope.xlsx"), "")), \
      patch("app.main.QMessageBox.information") as info:
     w.export_excel()

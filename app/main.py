@@ -3426,28 +3426,46 @@ class MainWindow(QMainWindow):
                   pages=", ".join(str(i + 1) for i in scanned[:10])
                   + (" …" if len(scanned) > 10 else "")))
 
+    EXCEL_MODES = [
+        ("document", False, "excel.mode_doc"),     # ทั้งเอกสาร ชีตเดียว (แบบ ABBYY)
+        ("document", True, "excel.mode_pages"),    # ทั้งเอกสาร แยกชีตตามหน้า
+        ("tables", False, "excel.mode_tables"),    # เฉพาะตาราง 1 ตาราง = 1 ชีต
+    ]
+
     def export_excel(self) -> None:
-        indexes = self._ask_scope("ดึงตารางเป็น Excel")
+        indexes = self._ask_scope(t("tools.to_excel").rstrip("…"))
         if indexes is None:
             return
-        default = str(self.doc.path.with_suffix(".xlsx")) if self.doc.path else "ตาราง.xlsx"
+        from PySide6.QtWidgets import QInputDialog
+        labels = [t(key) for _, _, key in self.EXCEL_MODES]
+        last = i18n.get_setting("excel_mode") or 0
+        choice, ok = QInputDialog.getItem(self, t("tools.to_excel").rstrip("…"), t("excel.ask"),
+                                          labels, min(int(last), len(labels) - 1), False)
+        if not ok:
+            return
+        pick = labels.index(choice)
+        i18n.set_setting("excel_mode", pick)
+        mode, per_page, _ = self.EXCEL_MODES[pick]
+
+        default = str(self.doc.path.with_suffix(".xlsx")) if self.doc.path else "เอกสาร.xlsx"
         target, _ = QFileDialog.getSaveFileName(
             self, "บันทึกเป็น Excel", default, "ไฟล์ Excel (*.xlsx)")
         if not target:
             return
 
-        self._busy("กำลังดึงตาราง…")
+        self._busy(t("excel.busy"))
         try:
-            count = self.doc.to_excel(target, indexes)
+            count = self.doc.to_excel(target, indexes, mode=mode, sheet_per_page=per_page)
         except ValueError as exc:
-            QMessageBox.information(self, "ไม่พบตาราง", str(exc))
+            QMessageBox.information(self, t("tools.to_excel").rstrip("…"), str(exc))
             return
         except Exception as exc:
-            QMessageBox.critical(self, "ดึงตารางไม่สำเร็จ", str(exc))
+            QMessageBox.critical(self, t("excel.failed"), str(exc))
             return
         finally:
             self._done_busy()
-        self.statusBar().showMessage(f"ดึง {count} ตารางไปที่ {target}", 8000)
+        msg = "excel.done_tables" if mode == "tables" else "excel.done_doc"
+        self.statusBar().showMessage(t(msg, n=count, path=target), 8000)
 
     def export_embedded_images(self) -> None:
         indexes = self._ask_scope("ดึงรูปภาพในไฟล์")
