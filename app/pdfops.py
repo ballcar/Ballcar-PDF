@@ -3093,6 +3093,20 @@ class PdfDocument:
         """หน้านี้เป็นภาพสแกนหรือเปล่า (แทบไม่มีข้อความให้เลือกได้)"""
         return len(self.page_text(index).strip()) < 20
 
+    def looks_textless(self, index: int) -> bool:
+        """หน้านี้ "ดูเหมือนมีตัวหนังสือ" แต่คลุม/คัดลอกไม่ได้ — มีรูป หรือมีเส้นวาดเยอะ แต่ไม่มีข้อความ
+
+        (หน้าว่างเปล่าไม่นับ) ใช้บอกผู้ใช้ว่าไฟล์สแกน / Print to PDF ต้องทำ OCR ก่อน
+        """
+        if not self.needs_ocr(index):
+            return False
+        page = self.doc.load_page(index)
+        area = abs(page.rect)
+        for info in page.get_image_info():
+            if abs(fitz.Rect(info["bbox"]) & page.rect) > area * 0.2:   # รูปใหญ่ (หน้าสแกน)
+                return True
+        return len(page.get_cdrawings()) > 150     # ตัวอักษรที่ถูกแปลงเป็นเส้นวาด (แบบเร็ว)
+
     def ocr_text(self, index: int, language: str = "tha+eng", dpi: int = 300) -> str:
         """อ่านข้อความจากหน้าที่เป็นรูป คืนเป็นข้อความ"""
         ensure_tesseract()

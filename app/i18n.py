@@ -452,6 +452,13 @@ TEXTS: dict[str, dict[str, str]] = {
         "risk.attach": "ไฟล์แนบ {n} ไฟล์",
         "risk.clean": "ล้างออก",
         "risk.dismiss": "ซ่อนแถบนี้",
+        "ocrbar.all": "ไฟล์นี้คลุม/คัดลอกข้อความไม่ได้ — เป็นไฟล์สแกน หรือตัวอักษรถูกแปลงเป็นภาพ"
+                      " (เช่นทำด้วย Print to PDF) · ทำ OCR เพื่อให้คลุม คัดลอก และค้นหาได้",
+        "ocrbar.some": "มี {n} หน้าที่คลุม/คัดลอกข้อความไม่ได้ (หน้า {pages}) — ทำ OCR เพื่อให้คัดลอก/ค้นหาได้",
+        "ocrbar.go": "ทำ OCR…",
+        "ocrbar.why": "ในไฟล์ไม่มีตัวหนังสือจริง มีแต่ภาพของตัวหนังสือ\n"
+                      "OCR จะอ่านภาพแล้วซ้อนตัวหนังสือที่มองไม่เห็นไว้ข้างหลัง (หน้าตาเหมือนเดิม)\n"
+                      "ถ้ามีต้นฉบับ (เว็บ/Word) ทำ PDF ใหม่ด้วย 'บันทึกเป็น PDF' จะได้ข้อความถูกทุกตัว",
         "risk.none": "ไม่พบสคริปต์ คำสั่งเปิดโปรแกรม หรือไฟล์แนบในไฟล์นี้",
         "risk.confirm": "ลบ JavaScript คำสั่งเปิดโปรแกรม และไฟล์แนบออกจากไฟล์นี้?\n\nเนื้อหาหน้า ลิงก์เว็บ และช่องฟอร์มยังอยู่ครบ · ก่อนบันทึกกด Ctrl+Z ย้อนกลับได้",
         "risk.done": "ล้างแล้ว {n} รายการ — กดบันทึกเพื่อเก็บไฟล์ที่ปลอดภัย",
@@ -1111,6 +1118,13 @@ TEXTS: dict[str, dict[str, str]] = {
         "risk.attach": "{n} attached files",
         "risk.clean": "Remove",
         "risk.dismiss": "Hide this bar",
+        "ocrbar.all": "Text in this file can't be selected or copied — it is a scan, or the letters"
+                      " were turned into shapes (e.g. Print to PDF) · Run OCR to make it selectable and searchable",
+        "ocrbar.some": "{n} page(s) have no selectable text (page {pages}) — run OCR to copy/search them",
+        "ocrbar.go": "Run OCR…",
+        "ocrbar.why": "The file contains pictures of text, not real text.\n"
+                      "OCR reads them and adds an invisible text layer (the pages look the same).\n"
+                      "If you have the original (web page/Word), 'Save as PDF' again to get exact text.",
         "risk.none": "No scripts, program-launch actions or attachments found in this file",
         "risk.confirm": "Remove JavaScript, program-launch actions and attached files from this file?\n\nPage content, web links and form fields stay · Ctrl+Z undoes it before saving",
         "risk.done": "Removed {n} items — save to keep the safe file",

@@ -833,6 +833,23 @@ class MainWindow(QMainWindow):
         style_action_bar(self._risk_bar, "riskBar", "warn")
         self._risk_bar.hide()
         viewer_layout.addWidget(self._risk_bar)
+        # 2.3.3: แถบบอกว่าไฟล์นี้ไม่มีตัวหนังสือจริง (สแกน / Print to PDF ที่แปลงตัวอักษรเป็นเส้น)
+        self._ocr_bar = QWidget()
+        ocr_layout = QHBoxLayout(self._ocr_bar)
+        ocr_layout.setContentsMargins(8, 4, 8, 4)
+        self._ocr_label = QLabel()
+        self._ocr_label.setWordWrap(True)
+        ocr_layout.addWidget(self._ocr_label, 1)
+        self._ocr_go = QPushButton()
+        self._ocr_go.clicked.connect(self.ocr_dialog)
+        self._ocr_close = QPushButton("×")
+        self._ocr_close.setFixedWidth(30)
+        self._ocr_close.clicked.connect(self._dismiss_ocr_bar)
+        ocr_layout.addWidget(self._ocr_go)
+        ocr_layout.addWidget(self._ocr_close)
+        style_action_bar(self._ocr_bar, "ocrBar", "info")
+        self._ocr_bar.hide()
+        viewer_layout.addWidget(self._ocr_bar)
         viewer_layout.addWidget(self._placing_bar)
         viewer_layout.addWidget(self._stamp_bar)
         viewer_layout.addWidget(self._text_bar)
@@ -1255,7 +1272,43 @@ class MainWindow(QMainWindow):
 
     # ---------------- สคริปต์ / ไฟล์แนบในไฟล์ PDF (2.3 ความปลอดภัย) ----------------
 
+    OCR_SAMPLE = 15      # ไฟล์ยาว ดูแค่ 15 หน้าแรกพอ (เปิดไฟล์ต้องไม่ช้า)
+
+    def _update_ocr_bar(self) -> None:
+        """ไฟล์ที่คลุม/คัดลอกข้อความไม่ได้ -> บอกเหตุผล + ปุ่มทำ OCR (ซ่อนได้ ต่อไฟล์)"""
+        doc = self.doc
+        if doc is None or not doc.page_count or getattr(doc, "ocr_dismissed", False):
+            self._ocr_bar.hide()
+            return
+        if getattr(doc, "textless_pages", None) is None:
+            try:
+                pages = range(min(doc.page_count, self.OCR_SAMPLE))
+                doc.textless_pages = [i for i in pages if doc.looks_textless(i)]
+            except Exception:
+                doc.textless_pages = []
+        missing = doc.textless_pages
+        sampled = min(doc.page_count, self.OCR_SAMPLE)
+        if not missing:
+            self._ocr_bar.hide()
+            return
+        if len(missing) == sampled:
+            text = t("ocrbar.all")
+        else:
+            shown = ", ".join(str(i + 1) for i in missing[:8]) + (" …" if len(missing) > 8 else "")
+            text = t("ocrbar.some", n=len(missing), pages=shown)
+        self._ocr_label.setText("🔍 " + text)
+        self._ocr_label.setToolTip(t("ocrbar.why"))
+        self._ocr_go.setText(t("ocrbar.go"))
+        self._ocr_close.setToolTip(t("risk.dismiss"))
+        self._ocr_bar.show()
+
+    def _dismiss_ocr_bar(self) -> None:
+        if self.doc is not None:
+            self.doc.ocr_dismissed = True
+        self._ocr_bar.hide()
+
     def _update_risk_bar(self) -> None:
+        self._update_ocr_bar()
         doc = self.doc
         if doc is None or not doc.page_count:
             self._risk_bar.hide()
